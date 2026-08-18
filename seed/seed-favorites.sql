@@ -1,0 +1,5 @@
+-- 商品收藏（2 条）
+BEGIN;
+INSERT OR IGNORE INTO favorites (offer_id,url_canonical_snapshot,source_offer_key_snapshot,source_id_snapshot,source_store_name_snapshot,title_snapshot,canonical_product_id_snapshot,price_snapshot,currency_snapshot,status_snapshot,note,created_at,updated_at) VALUES ('1c16c76cc6b9defe179fec1394c147f8ab015c09','https://lyxazy.cn?commodity=63','63','src-lyxazy-c62d8b','lyxazy.cn','谷歌批量自动化管理器','other-product',400.0,'CNY','in_stock',NULL,'2026-07-11T16:52:54.979Z','2026-07-11T16:52:54.979Z');
+INSERT OR IGNORE INTO favorites (offer_id,url_canonical_snapshot,source_offer_key_snapshot,source_id_snapshot,source_store_name_snapshot,title_snapshot,canonical_product_id_snapshot,price_snapshot,currency_snapshot,status_snapshot,note,created_at,updated_at) VALUES ('ae8099df078ab928d4c7f0bc971a62e5e2d65b57','https://udddu.com/buy/28','br:微软已过edu没验卡白号，块钱','src-udddu-43f918','起风','微软已过EDU没验卡白号，块钱','other-product',5.0,'CNY','in_stock',NULL,'2026-07-16T00:35:01.060Z','2026-07-16T00:35:01.060Z');
+COMMIT;

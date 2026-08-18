@@ -53,6 +53,19 @@ npm run build:web
 npm run db:init
 ```
 
+### 恢复店铺配置
+
+数据库本身不入库（`.gitignore` 排除 `*.db`），但 `seed/` 下有店铺配置与收藏的种子数据：
+
+```bash
+sqlite3 "$SHOP_DB_PATH" < seed/seed-sources.sql     # 50 家店铺配置
+sqlite3 "$SHOP_DB_PATH" < seed/seed-favorites.sql   # 商品收藏
+```
+
+导入的是配置本身（入口 URL、采集器类型、启用与收藏状态）；健康状态、连败计数等运行时字段
+不在种子里，首次采集会自动生成。商品报价也不在种子里——跑一次采集即可拉全。
+`seed/sources.json` 是同一份数据的可读版本，便于人工查看或迁移到别处。
+
 浏览器采集（只有少数站点需要）额外装 Chromium 与 playwright-core：
 
 ```bash
