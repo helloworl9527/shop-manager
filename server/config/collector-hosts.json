@@ -1,0 +1,109 @@
+{
+  "upstream": {
+    "kami": [
+      "123456787kelie.top",
+      "acg.nbcode.xyz",
+      "ai666.dnxb.cc",
+      "ai666.id",
+      "aisou.pro",
+      "caowo.store",
+      "douyiner.cn",
+      "faka.redeemai.me",
+      "faka.redeemgpt.com",
+      "feifei.shop",
+      "fk.gptcz.cc",
+      "fk.gptkt.pro",
+      "fk.ybkjs.top",
+      "gemini91.shop",
+      "gmail1888.com",
+      "hiemail.store",
+      "ifaka.app",
+      "lynnzee.myweb999.cfd",
+      "nikoers.com",
+      "shop.558686.xyz",
+      "shop.bmoplus.com",
+      "shop.gpt365.wiki",
+      "shopcardai.click",
+      "shihuiai.cn",
+      "talkai.cyou",
+      "tehuio.com",
+      "web3chirou.com",
+      "wiki123.top",
+      "yh-mo.xyz",
+      "zhanghao66.com",
+      "zzshu.com"
+    ],
+    "dujiao": [
+      "11.id2323.top",
+      "98-xj.com",
+      "ac-card.org",
+      "burstpro-ai.online",
+      "card.kxandyou.com",
+      "ccdawang.win",
+      "fk.txspvip.xyz",
+      "geekaihub.com",
+      "gmail91.shop",
+      "kapay.shop",
+      "morimm.com",
+      "shop.aitonse.com",
+      "shop.auto-subscribe.com",
+      "shop.mfttai.com",
+      "ultra.makelove.cloud",
+      "zhang520.store"
+    ],
+    "shopApi": [
+      "catfk.com",
+      "ldxp.cn",
+      "pay.ldxp.cn",
+      "pay.qxvx.cn"
+    ],
+    "xiaoheiwan": [
+      "upgrade.xiaoheiwan.com"
+    ],
+    "opensoraHtml": [
+      "aifk.opensora.de"
+    ],
+    "makerichHtml": [
+      "makerich.club"
+    ],
+    "beibeiHtml": [
+      "bei-bei.shop"
+    ],
+    "ikunloveApi": [
+      "ikunlove.best"
+    ],
+    "getgptApi": [
+      "getgpt.pro"
+    ],
+    "publicProductsApi": [
+      "academicgate.org",
+      "catcard.uk",
+      "pipboy.vip"
+    ],
+    "shopUserProductsApi": [
+      "sd.ncet.top"
+    ],
+    "unicornHtml": [
+      "meowka.vip",
+      "ouvg.top"
+    ],
+    "mooncakeCatalog": [
+      "fk1.ybkjs.top"
+    ],
+    "blackcatWholesale": [
+      "autopixel.qzz.io"
+    ],
+    "genericHtml": [
+      "19cm.tech",
+      "lemon-watermelon.com",
+      "of365.vip",
+      "sulanjun.cc",
+      "woaimaihao.com",
+      "xingbao-ai.shop",
+      "xxxyan.cc"
+    ]
+  },
+  "overrides": {
+    "gemini91.shop": "dujiao"
+  }
+}
