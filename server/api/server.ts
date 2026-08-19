@@ -368,7 +368,8 @@ export function buildServer(db: SqliteDatabase, options: BuildOptions = {}): Fas
     const q = (req.query ?? {}) as Record<string, any>;
     const query = String(q.q ?? "").trim();
     const platform = q.platform ? String(q.platform) : undefined;
-    const sort = q.sort === "price" ? "price" : "relevance";
+    // 默认价格优先，与前台一致：显式传 sort=relevance 才按匹配度排。
+    const sort = q.sort === "relevance" ? "relevance" : "price";
     const page = q.page ? Number(q.page) : 1;
     const pageSize = q.pageSize ? Number(q.pageSize) : 24;
     const favoriteOnly = parseBooleanParam(q.favoriteOnly);

@@ -35,7 +35,8 @@ export function FrontBrowse({
   const [platform, setPlatform] = useState<string>("");
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"relevance" | "price">("relevance");
+  // 默认按价格排：这是比价工具，打开就该先看到最便宜的。点「相关度」可切回按匹配度排。
+  const [sort, setSort] = useState<"relevance" | "price">("price");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<DataState>({ items: [], total: 0, pageSize: 24, appliedQ: "" });
   const [loading, setLoading] = useState(false);
