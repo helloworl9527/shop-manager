@@ -7,6 +7,7 @@ import { collectDujiaoHtmlFromHtml } from "./dujiaoHtml";
 import { collectGenericHtmlFromHtml } from "./genericHtml";
 import { collectShopApi } from "./shopApi";
 import { collectPublicProductsApi } from "./publicProductsApi";
+import { collectProductsListApi } from "./productsListApi";
 import { normalizeHostname, shopTokenFromUrl } from "./util";
 import collectorHostsConfig from "../config/collector-hosts.json";
 
@@ -53,7 +54,7 @@ for (const [host, kind] of Object.entries((collectorHostsConfig as CollectorHost
   HOST_TO_KIND.set(normalized, kind);
 }
 
-const IMPLEMENTED_KINDS = new Set<CollectorKind>(["kami", "dujiao", "dujiaoHtml", "shopApi", "publicProductsApi", "genericHtml", "browser"]);
+const IMPLEMENTED_KINDS = new Set<CollectorKind>(["kami", "dujiao", "dujiaoHtml", "shopApi", "publicProductsApi", "productsListApi", "genericHtml", "browser"]);
 const PROBE_STEP_TIMEOUT_MS = 10_000;
 const PROBE_CONCURRENCY = 3;
 let activeProbes = 0;
@@ -189,6 +190,7 @@ async function collectKindTrial(target: CollectorTarget, kind: CollectorKind, ht
   if (kind === "dujiao") return collectDujiao(target, http);
   if (kind === "shopApi") return collectShopApi(target, http);
   if (kind === "publicProductsApi") return collectPublicProductsApi(target, http);
+  if (kind === "productsListApi") return collectProductsListApi(target, http);
   if (kind === "dujiaoHtml") {
     const html = await http.fetchText(target.sourceUrl);
     return collectDujiaoHtmlFromHtml(target, html, http);
@@ -280,6 +282,22 @@ async function detectCollectorInner(target: CollectorTarget, http: HttpClient): 
     );
     if (probe.matched) {
       return { kind: "dujiao", evidence: "接口指纹命中 /api/v1/public/products", attempts };
+    }
+  } catch (err) {
+    // 继续瀑布。
+  }
+
+  // productsListApi：/api/products → { data: { list: [...] } }
+  if (skipKind !== "productsListApi") try {
+    const probe = await attempt(
+      attempts,
+      "productsListApi",
+      () => withStepTimeout("productsListApi", () => http.fetchJson(`${base}/api/products`)),
+      (j: any) => Array.isArray(j?.data?.list) && j.data.list.length > 0 && j?.data?.list?.[0]?.base_price !== undefined,
+      "接口指纹命中 /api/products（data.list + base_price）",
+    );
+    if (probe.matched) {
+      return { kind: "productsListApi", evidence: "接口指纹命中 /api/products（data.list + base_price）", attempts };
     }
   } catch (err) {
     // 继续瀑布。

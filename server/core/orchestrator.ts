@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { SqliteDatabase } from "../db/connection";
 import type { Collector, CollectorOffer, ProbeAttempt } from "../collectors/types";
-import { collectorFor, detectCollector } from "../collectors";
+import { collectorFor, detectCollector, PendingCollectorError } from "../collectors";
 import { collectBrowser, collectShopApiViaBrowser, isChallengeBlockedError } from "../collectors/browser";
 import { normalizeHostname } from "../collectors/util";
 import { httpClient, type HttpClient } from "./http";
@@ -38,6 +38,11 @@ export interface CollectDeps {
 
 const LOCK_TTL = 10 * 60 * 1000;
 const RENEW_EVERY = 2 * 60 * 1000;
+
+/** SHOP_NO_BROWSER_FALLBACK=1：整机不具备浏览器采集条件（无桌面/未装 Chromium）时全面禁用。 */
+function browserDisabled(): boolean {
+  return process.env.SHOP_NO_BROWSER_FALLBACK === "1";
+}
 const HIGH_CONFIDENCE_EVIDENCE = /^(接口指纹|域名注册表|URL 形态|HTML 指纹|HTML 价格锚点)/;
 
 function canPersistDetectedKind(kind: string, evidence: string | null, status: SourceStatus, usedDetectOffers: boolean): boolean {
@@ -164,6 +169,11 @@ export async function collectSource(db: SqliteDatabase, source: SourceRow, deps:
     // 而非通用 DOM 提取（后者会把店铺公告/分类文字误当商品）。
     const runResolvedCollector = async (kind: string): Promise<CollectorOffer[]> => {
       if (kind === "browser") {
+        // 禁用浏览器时，判定为 browser 等同于「没有可用的 HTTP 采集器」：
+        // 直接记为待办，而不是去启动一个不存在的浏览器再报错。
+        if (browserDisabled()) {
+          throw new PendingCollectorError("采集器待办：该站点需浏览器采集，但本机已禁用浏览器（SHOP_NO_BROWSER_FALLBACK=1）。");
+        }
         usedMethod = "browser";
         startHeartbeat();
         const isShopApi = /\/(shop|item)\/[^/?#]+/.test(target.sourceUrl);
@@ -196,7 +206,7 @@ export async function collectSource(db: SqliteDatabase, source: SourceRow, deps:
         collected = shouldDetect ? await runDetection() : await runResolvedCollector(storedKind);
       }
     } catch (err) {
-      const fallbackEnabled = process.env.SHOP_NO_BROWSER_FALLBACK !== "1";
+      const fallbackEnabled = !browserDisabled();
       if (fallbackEnabled && initialMethod !== "browser" && canFallbackToBrowser(resolvedKind) && shouldFallbackToBrowser(err)) {
         // HTTP 采集被验证码/风控拦截 → 自动改用浏览器采集器（除非用 SHOP_NO_BROWSER_FALLBACK=1 关闭）
         usedMethod = "browser";
@@ -206,7 +216,9 @@ export async function collectSource(db: SqliteDatabase, source: SourceRow, deps:
         const isShopApi = resolvedKind === "shopApi" || /\/(shop|item)\/[^/?#]+/.test(target.sourceUrl);
         const browserCollector = isShopApi ? (deps.shopApiBrowserCollector ?? collectShopApiViaBrowser) : (deps.browserCollector ?? collectBrowser);
         collected = await browserCollector(target, httpClient);
-      } else if (fallbackEnabled && !deps.resolveCollector && !ranDetection && !isChallengeBlockedError(err) && !isRetryableUpstreamError(err)) {
+      } else if (!deps.resolveCollector && !ranDetection && !isChallengeBlockedError(err) && !isRetryableUpstreamError(err)) {
+        // 注意：自愈与浏览器无关，故不受 SHOP_NO_BROWSER_FALLBACK 约束。
+        // 早前它被 fallbackEnabled 一并关掉，导致禁用浏览器的部署失去「类型过期自动重识别」能力。
         // 自愈：存量 kind 采集失败（类型过期/误判/提取不到）→ 重新识别并重试一次。
         // 等价于「删除店铺重新添加」时走 auto 检测的效果，根治「批量重跑部分店铺失败、删除重加就好」。
         // 上游临时错误（限流/5xx/52x/超时）不在此列：类型没错，稍后重试即可，避免换错采集器与加倍打站点。

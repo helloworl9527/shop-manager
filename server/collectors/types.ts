@@ -13,6 +13,7 @@ export type CollectorKind =
   | "ikunloveApi"
   | "getgptApi"
   | "publicProductsApi"
+  | "productsListApi"
   | "shopUserProductsApi"
   | "unicornHtml"
   | "mooncakeCatalog"
