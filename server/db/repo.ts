@@ -40,6 +40,17 @@ export function targetFromSource(s: SourceRow): CollectorTarget {
   return { sourceId: s.id, sourceName: s.name, sourceUrl: s.entry_url, baseUrl, knownItemUrls };
 }
 
+/**
+ * 本机正在直采的店铺入口（不含自己）。供聚合型采集器跳过重复收录的店铺。
+ * 只取启用中的：停用的店铺我们已经不再更新，让聚合源补上反而是好事。
+ */
+export function listCollectedStoreUrls(db: SqliteDatabase, exceptSourceId: string): string[] {
+  return db
+    .prepare("SELECT entry_url FROM sources WHERE enabled=1 AND id != ?")
+    .all(exceptSourceId)
+    .map((row: any) => String(row.entry_url));
+}
+
 /** 纯函数：把采集结果构造成 raw_offers 行（含分类、id、测活字段）。便于单测。 */
 export function buildOfferRow(input: {
   sourceId: string;

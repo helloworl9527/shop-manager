@@ -17,6 +17,7 @@ const KIND_LABELS: Record<string, string> = {
   dujiao: "独角 API",
   dujiaoHtml: "独角 HTML",
   shopApi: "链动小铺",
+  priceaiApi: "PriceAI 聚合",
   publicProductsApi: "公开商品 API",
   genericHtml: "通用 HTML",
   browser: "需浏览器",

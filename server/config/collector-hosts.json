@@ -105,5 +105,8 @@
   },
   "overrides": {
     "gemini91.shop": "dujiao"
-  }
+  },
+  "priceaiApi": [
+    "priceai.cc"
+  ]
 }

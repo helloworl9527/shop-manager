@@ -14,6 +14,7 @@ export type CollectorKind =
   | "getgptApi"
   | "publicProductsApi"
   | "productsListApi"
+  | "priceaiApi"
   | "shopUserProductsApi"
   | "unicornHtml"
   | "mooncakeCatalog"
@@ -32,6 +33,13 @@ export interface CollectorTarget {
   sourceStoreName?: string;
   /** 已知商品链接（shopApi 反查 token 用，可选）。 */
   knownItemUrls?: string[];
+  /**
+   * 本机已经在直采的店铺入口 URL。
+   * 聚合型数据源（如 priceai）会收录成百上千家店铺，其中一部分我们自己也在直采——
+   * 直采的数据更全更新，重复收录会让同一家店在比价页出现两次、店铺数也翻倍。
+   * 采集器据此跳过这些店铺。
+   */
+  knownStoreUrls?: string[];
 }
 
 /** 采集器统一输出。 */
