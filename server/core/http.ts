@@ -1,6 +1,11 @@
 import dns from "node:dns/promises";
+import { fetch as undiciFetch } from "undici";
+import { dispatcherFor, isProxyError, proxyEnabled, reportProxyFailure, resolveCurrentProxy, resolveGateway } from "./proxy";
 
 const TIMEOUT_MS = 20_000;
+
+/** 单个请求最多尝试几个出口（含第一次）。 */
+const PROXY_ATTEMPTS = 3;
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
@@ -91,24 +96,56 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 等到该域名允许下一次请求为止。串行等待，保证同域名请求之间始终留有间隔。 */
-async function throttleHost(hostname: string): Promise<void> {
+/**
+ * 等到该域名允许下一次请求为止。串行等待，保证同域名请求之间始终留有间隔。
+ *
+ * 限速的键是「出口 IP + 域名」而非域名本身：站点看到的是 IP 的请求密度，
+ * 走不同出口的请求彼此之间不需要相互等待。启用代理池后整体吞吐随出口数提升，
+ * 而每个 IP 上的密度仍严格保持在 minGap 以内。
+ */
+async function throttleHost(hostname: string, egressId: string): Promise<void> {
   const minGap = hostMinGapMs();
   if (minGap <= 0) return;
+  const key = `${egressId}|${hostname}`;
   const now = Date.now();
-  const earliest = (lastRequestAt.get(hostname) ?? 0) + minGap + jitterMs();
+  const earliest = (lastRequestAt.get(key) ?? 0) + minGap + jitterMs();
   // 先占位再等待：并发调用会依次排到各自的时间片，避免同时放行。
   const scheduled = Math.max(now, earliest);
-  lastRequestAt.set(hostname, scheduled);
+  lastRequestAt.set(key, scheduled);
   if (scheduled > now) await sleep(scheduled - now);
 }
 
 async function guardedFetch(url: string, init: RequestInit): Promise<Response> {
   const u = new URL(url);
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("仅允许 http/https。");
+  // 即使走代理也在本地做一次解析校验：代理不应成为访问内网的跳板。
   await ensurePublicHost(u.hostname);
-  await throttleHost(u.hostname);
-  return fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+
+  const options = { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) };
+  if (!proxyEnabled()) {
+    await throttleHost(u.hostname, "direct");
+    return fetch(url, options);
+  }
+
+  // 池里总有个别代理临时不通。一个坏出口不该让整家店铺采集失败：
+  // 摘掉它换下一个重试，重试次数封顶避免在整池都挂时空转。
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < PROXY_ATTEMPTS; attempt += 1) {
+    const selected = await resolveCurrentProxy();
+    if (!selected) break;
+    const proxy = await resolveGateway(selected);
+    await throttleHost(u.hostname, selected.id);
+    try {
+      return (await undiciFetch(url, { ...options, dispatcher: dispatcherFor(proxy) } as any)) as unknown as Response;
+    } catch (err) {
+      // 区分「代理挂了」与「站点拒绝了」：只有前者才拉黑代理并换出口重试，
+      // 站点侧的错误要原样抛出，交给上层的熔断/自愈逻辑处理。
+      if (!isProxyError(err)) throw err;
+      reportProxyFailure(selected);
+      lastErr = new Error(`代理 ${proxy.server} 不可用：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw lastErr ?? new Error("代理池无可用出口。");
 }
 
 async function parseJsonResponse(response: Response, url: string): Promise<any> {

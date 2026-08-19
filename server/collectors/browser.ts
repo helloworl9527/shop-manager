@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Collector, CollectorOffer, CollectorTarget } from "./types";
 import { normalizeKeyFromTitle } from "../core/ids";
 import { cleanText, numberOrNull, compact, isNonComparableTitle, statusFromStock, shopTokenFromUrl } from "./util";
+import { playwrightProxy } from "../core/proxy";
 
 /** page.evaluate 注入垫片：修复 tsx/esbuild keepNames 注入的 __name 在浏览器内未定义。传字符串避免被改写。 */
 export const NAME_SHIM = "globalThis.__name = globalThis.__name || function (f) { return f; };";
@@ -145,6 +146,7 @@ export async function launchPersistentBrowserContext(opts: { headless: boolean }
     "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions",
   ];
   const userAgent = opts.headless ? readProfileUserAgent() : null;
+  const proxy = await playwrightProxy();
   const launchOnce = () =>
     withTimeout(
       chromium.launchPersistentContext(PROFILE_DIR, {
@@ -153,6 +155,9 @@ export async function launchPersistentBrowserContext(opts: { headless: boolean }
         timeout: launchMs,
         viewport: { width: 1440, height: 980 },
         userAgent: userAgent ?? undefined,
+        // 浏览器采集与 HTTP 采集必须走同一出口：同一家店铺先 HTTP 再回退浏览器时，
+        // 若出口 IP 变了，站点侧看到的是「同一会话换了 IP」，比不用代理更可疑。
+        proxy,
         args,
       }),
       launchMs + 5000,

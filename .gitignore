@@ -6,3 +6,6 @@ dist/
 .env
 .node-path
 .DS_Store
+
+proxies.txt
+*.proxies.txt
