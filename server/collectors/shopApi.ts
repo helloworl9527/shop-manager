@@ -67,28 +67,6 @@ async function discoverShopTokens(target: CollectorTarget, http: HttpClient): Pr
   return Array.from(tokens);
 }
 
-/**
- * 只取店铺名，不采商品。
- *
- * 链动小铺的页面是 SPA，`<title>` 是空的，真实店名只存在于 Shop/info 接口里，
- * 所以「读 HTML 猜店名」那一套对它完全无效。入口是 /shop/<token> 时 token 直接从
- * URL 拿，整个过程只发一个请求。
- */
-export async function fetchShopApiStoreName(target: CollectorTarget, http: HttpClient): Promise<string | null> {
-  const tokens = await discoverShopTokens(target, http).catch(() => [] as string[]);
-  for (const token of tokens) {
-    const info = await postShopApiWithRetry(
-      http,
-      `${target.baseUrl}/shopApi/Shop/info`,
-      { token, category_key: "" },
-      `${target.baseUrl}/shop/${token}`,
-    ).catch(() => null);
-    const name = cleanText(String(info?.data?.nickname ?? ""));
-    if (info?.code === 1 && name) return name;
-  }
-  return null;
-}
-
 /** 链动小铺 / ShopApi：/shopApi/Shop/{info,categoryList,goodsList}。 */
 export const collectShopApi: Collector = async (target, http) => {
   const base = target.baseUrl;

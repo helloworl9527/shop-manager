@@ -15,6 +15,7 @@ export function FavoritesPage({
 
   const [adding, setAdding] = useState(false);
   const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -51,12 +52,16 @@ export function FavoritesPage({
     if (!value) return;
     setBusy(true);
     try {
-      const r = await api.addFavoriteStore({ url: value, category: category.trim() || undefined });
+      const r = await api.addFavoriteStore({
+        url: value,
+        name: name.trim() || undefined,   // 留空则由后端按链接推导「域名 / token」
+        category: category.trim() || undefined,
+      });
       await load();
       setUrl("");
+      setName("");
       setAdding(false);
-      const via = r.nameVia === "proxy" ? "（走代理取到店铺名）" : r.nameVia === "fallback" ? "（未能取到店铺名，已用链接兜底，可点名字改）" : "";
-      notify?.(r.created ? `已收藏「${r.row.name}」${via}` : `已在收藏里：「${r.row.name}」`);
+      notify?.(r.created ? `已收藏「${r.row.name}」` : `已在收藏里：「${r.row.name}」`);
     } catch (e) {
       notify?.(`收藏失败：${(e as Error).message}`);
     } finally {
@@ -106,6 +111,13 @@ export function FavoritesPage({
             autoFocus
           />
           <input
+            style={{ flex: "1 1 200px" }}
+            placeholder="店铺名称（留空则用链接）"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) void addStore(); }}
+          />
+          <input
             style={{ flex: "1 1 160px" }}
             placeholder="分类（可留空）"
             list="fav-store-categories"
@@ -117,9 +129,9 @@ export function FavoritesPage({
             {categories.map((c) => <option key={c} value={c} />)}
           </datalist>
           <button className="btn primary" onClick={() => void addStore()} disabled={busy || !url.trim()}>
-            {busy ? "识别店铺名…" : "收藏"}
+            {busy ? "保存中…" : "收藏"}
           </button>
-          <span className="muted" style={{ flexBasis: "100%" }}>只收藏链接、探测一次店铺名，不采集商品。</span>
+          <span className="muted" style={{ flexBasis: "100%" }}>只记录链接与名称，不访问站点、不采集商品。名称之后随时可以点「改名」修改。</span>
         </div>
       )}
 

@@ -124,8 +124,8 @@ export const api = {
   addFavorite: (offerId: string) => http<{ ok: boolean; created: boolean }>("POST", "/api/favorites", { offerId }),
   removeFavorite: (offerId: string) => http<{ removed: boolean }>("DELETE", `/api/favorites/${encodeURIComponent(offerId)}`),
   listFavoriteStores: () => http<{ items: FavoriteStore[]; categories: string[] }>("GET", "/api/favorite-stores"),
-  addFavoriteStore: (body: { url: string; category?: string; name?: string; note?: string }) =>
-    http<{ row: FavoriteStore; created: boolean; nameVia: string }>("POST", "/api/favorite-stores", body),
+  addFavoriteStore: (body: { url: string; name?: string; category?: string; note?: string }) =>
+    http<{ row: FavoriteStore; created: boolean }>("POST", "/api/favorite-stores", body),
   updateFavoriteStore: (id: string, patch: { name?: string; category?: string | null; note?: string | null }) =>
     http<{ updated: boolean; row: FavoriteStore }>("PATCH", `/api/favorite-stores/${encodeURIComponent(id)}`, patch),
   removeFavoriteStore: (id: string) =>

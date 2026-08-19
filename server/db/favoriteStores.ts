@@ -113,19 +113,6 @@ export function updateFavoriteStore(
   return getFavoriteStore(db, id);
 }
 
-/**
- * 用探测到的店铺名刷新「自动名」。手动改过的（name_source='manual'）一律不动。
- *
- * 需要它是因为 ★ 同步建行时用的是采集店铺当时的名字，而那个名字可能还是
- * 「域名 / token」这种兜底值——探测明明拿到了真名，不刷新就白拿了。
- */
-export function refreshAutoName(db: SqliteDatabase, id: string, name: string): void {
-  const text = String(name ?? "").trim();
-  if (!text) return;
-  db.prepare("UPDATE favorite_stores SET name=@name, updated_at=@at WHERE id=@id AND name_source='auto'")
-    .run({ id, name: text.slice(0, 120), at: nowIso() });
-}
-
 /** 删除收藏。返回被解除关联的采集店铺 id（调用方需同步清掉 sources.favorite）。 */
 export function removeFavoriteStore(db: SqliteDatabase, id: string): { removed: boolean; sourceId: string | null } {
   const row = getFavoriteStore(db, id);

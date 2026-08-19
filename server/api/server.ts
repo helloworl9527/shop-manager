@@ -26,10 +26,9 @@ import {
   type VerifyDeps,
 } from "../core/verify";
 import { migrateSourceKinds, normalizeSourceUrl, probeSourceUrl, sourceNameFromUrl, sourceSlugFromUrl } from "../core/sourceProbe";
-import { probeStoreName } from "../core/storeName";
 import {
   addFavoriteStore, getFavoriteStore, listFavoriteStoreCategories, listFavoriteStores,
-  refreshAutoName, removeFavoriteStore, updateFavoriteStore,
+  removeFavoriteStore, updateFavoriteStore,
 } from "../db/favoriteStores";
 import type { CollectorOffer } from "../collectors/types";
 
@@ -107,38 +106,34 @@ export function buildServer(db: SqliteDatabase, options: BuildOptions = {}): Fas
     categories: listFavoriteStoreCategories(db),
   }));
 
+  // 从前台新增收藏：**不做任何网络请求**。店铺名和链接都由用户自己填，
+  // 名字留空才用链接本地推导出的「域名 / token」兜底（纯字符串处理，不访问站点）。
   app.post("/api/favorite-stores", async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, any>;
     if (!b.url) return reply.code(400).send({ error: "url 必填" });
-    let probed: { url: string; name: string; via: string };
+    let url: string;
     try {
-      probed = await probeStoreName(String(b.url), { http: deps.http });
+      url = normalizeSourceUrl(String(b.url)).entryUrl;
     } catch (err) {
-      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(400).send({ error: `链接无法解析：${err instanceof Error ? err.message : String(err)}` });
     }
-    // 收藏一个已在采集的店铺 = 给它点 ★。不认领的话同一家店会在收藏页出现两条，
-    // 而且后台星是暗的、收藏页却有，两边对不上。
-    const known = findSourceByEntryUrl(db, probed.url);
+
+    // 收藏一个已在采集的店铺 = 给它点 ★。这只是本地一次查表，不产生采集。
+    // 不认领的话同一家店会在收藏页出现两条，而且后台星是暗的、收藏页却有，两边对不上。
+    const known = findSourceByEntryUrl(db, url);
     if (known && !known.favorite) setSourceFavorite(db, known.id, true);
 
-    // 用户填了名字就以用户为准，不被探测结果覆盖
     const manual = String(b.name ?? "").trim();
     const r = addFavoriteStore(db, {
-      url: probed.url,
-      name: manual || probed.name,
+      url,
+      name: manual || sourceNameFromUrl(url),
       nameSource: manual ? "manual" : "auto",
       ...(b.category !== undefined ? { category: b.category } : {}),
       note: b.note ?? null,
     });
+    // 认领已有行时，用户填的名字要盖过 ★ 同步建行时用的采集店铺名
     if (manual && !r.created) updateFavoriteStore(db, r.row.id, { name: manual });
-    // 已存在的行可能还叫「域名 / token」（★ 同步建行时用的是采集店铺当时的名字），
-    // 探测拿到真名就刷上去；手动改过名的不动。
-    else if (!manual && probed.via !== "fallback") refreshAutoName(db, r.row.id, probed.name);
-    return reply.code(r.created ? 201 : 200).send({
-      row: getFavoriteStore(db, r.row.id),
-      created: r.created,
-      nameVia: manual ? "manual" : probed.via,
-    });
+    return reply.code(r.created ? 201 : 200).send({ row: getFavoriteStore(db, r.row.id), created: r.created });
   });
 
   app.patch("/api/favorite-stores/:id", async (req, reply) => {
