@@ -5,7 +5,7 @@ import { collectorFor, detectCollector, PendingCollectorError } from "../collect
 import { collectBrowser, collectShopApiViaBrowser, isChallengeBlockedError } from "../collectors/browser";
 import { normalizeHostname } from "../collectors/util";
 import { httpClient, type HttpClient } from "./http";
-import { withProxySession } from "./proxy";
+import { isLiandongSource, withProxySession } from "./proxy";
 import { shouldDelistMissing, type CollectionMethod } from "./freshness";
 import { shouldFallbackToBrowser, isRetryableUpstreamError, isHostThrottledError } from "./waf";
 import { canAutoUpdateStoreName, resolveStoreName } from "./sourceProbe";
@@ -136,11 +136,13 @@ function recordHostThrottledSkip(db: SqliteDatabase, source: SourceRow, host: st
 /**
  * 采集单个店铺：取锁 → 采集 → 事务(upsert + 差集下架) → 记日志/健康 → finally 释放锁。
  *
- * 整个过程包在一个代理会话里：启用代理池时，这家店铺的全部请求（含浏览器采集）
- * 走同一个出口 IP，店铺之间才轮换出口。
+ * 整个过程包在一个代理会话里，出口在这里一次决定、全程生效（含风控回退后的浏览器采集）：
+ * 只有链动小铺走代理，其余店铺直连本机出口，不消耗按 IP 计费的代理额度。
  */
 export async function collectSource(db: SqliteDatabase, source: SourceRow, deps: CollectDeps = {}): Promise<SourceResult> {
-  return withProxySession(source.id, () => collectSourceInner(db, source, deps));
+  return withProxySession(() => collectSourceInner(db, source, deps), {
+    useProxy: isLiandongSource({ collectorKind: source.collector_kind, entryUrl: source.entry_url }),
+  });
 }
 
 async function collectSourceInner(db: SqliteDatabase, source: SourceRow, deps: CollectDeps = {}): Promise<SourceResult> {

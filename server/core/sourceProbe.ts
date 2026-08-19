@@ -4,6 +4,7 @@ import { collectorFor, detectCollector } from "../collectors";
 import type { CollectorKind, CollectorOffer, CollectorTarget, ProbeAttempt } from "../collectors/types";
 import { deriveBaseUrl, normalizeHostname, shopTokenFromUrl } from "../collectors/util";
 import { httpClient, type HttpClient } from "./http";
+import { isLiandongSource, withProxySession } from "./proxy";
 
 export interface NormalizedSourceUrl {
   rawUrl: string;
@@ -221,22 +222,25 @@ export async function probeSourceUrl(
     knownItemUrls: normalized.knownItemUrls,
   };
   const http = deps.http ?? httpClient;
-  const detected = await detectCollector(target, http);
-  const attempts = [...(detected.attempts ?? [])];
-  let offers = detected.offers ?? [];
-  if (!offers.length) {
-    offers = await collectPreview(target, detected.kind, http, attempts);
-  }
+  // 加店时店铺还没入库，没有 collector_kind 可依，只能按 URL 形态判断该不该走代理。
+  return withProxySession(async () => {
+    const detected = await detectCollector(target, http);
+    const attempts = [...(detected.attempts ?? [])];
+    let offers = detected.offers ?? [];
+    if (!offers.length) {
+      offers = await collectPreview(target, detected.kind, http, attempts);
+    }
 
-  return {
-    normalized,
-    kind: detected.kind,
-    evidence: detected.evidence,
-    storeName: await resolveStoreName(target, http, offers),
-    offers,
-    attempts,
-    duplicate: duplicateRow ? { id: duplicateRow.id, name: duplicateRow.name } : null,
-  };
+    return {
+      normalized,
+      kind: detected.kind,
+      evidence: detected.evidence,
+      storeName: await resolveStoreName(target, http, offers),
+      offers,
+      attempts,
+      duplicate: duplicateRow ? { id: duplicateRow.id, name: duplicateRow.name } : null,
+    };
+  }, { useProxy: isLiandongSource({ entryUrl: normalized.entryUrl }) });
 }
 
 export async function migrateSourceKinds(
@@ -251,8 +255,10 @@ export async function migrateSourceKinds(
     const oldKind = source.collector_kind;
     try {
       const target = targetFromSource(source);
-      const detected = await detectCollector(target, http);
-      const storeName = await resolveStoreName(target, http, detected.offers ?? []);
+      const { detected, storeName } = await withProxySession(async () => {
+        const d = await detectCollector(target, http);
+        return { detected: d, storeName: await resolveStoreName(target, http, d.offers ?? []) };
+      }, { useProxy: isLiandongSource({ collectorKind: source.collector_kind, entryUrl: source.entry_url }) });
       const at = nowIso();
       const collectionMethod = detected.kind === "browser" ? "browser" : source.collection_method;
       let updated = persistSourceKind(db, source.id, {

@@ -1,10 +1,10 @@
 import dns from "node:dns/promises";
 import { fetch as undiciFetch } from "undici";
-import { dispatcherFor, isProxyError, proxyEnabled, reportProxyFailure, resolveCurrentProxy, resolveGateway } from "./proxy";
+import { dispatcherFor, isProxyError, proxySessionActive, reportProxyFailure, resolveCurrentProxy, resolveGateway } from "./proxy";
 
 const TIMEOUT_MS = 20_000;
 
-/** 单个请求最多尝试几个出口（含第一次）。 */
+/** 代理出错时最多换几个出口重试（含第一次）。 */
 const PROXY_ATTEMPTS = 3;
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -100,8 +100,8 @@ function sleep(ms: number): Promise<void> {
  * 等到该域名允许下一次请求为止。串行等待，保证同域名请求之间始终留有间隔。
  *
  * 限速的键是「出口 IP + 域名」而非域名本身：站点看到的是 IP 的请求密度，
- * 走不同出口的请求彼此之间不需要相互等待。启用代理池后整体吞吐随出口数提升，
- * 而每个 IP 上的密度仍严格保持在 minGap 以内。
+ * 走不同出口的请求彼此之间不需要相互等待。链动小铺走代理、其余店铺直连，
+ * 两拨请求即使打同一域名也互不排队，而每个 IP 上的密度仍严格保持在 minGap 以内。
  */
 async function throttleHost(hostname: string, egressId: string): Promise<void> {
   const minGap = hostMinGapMs();
@@ -122,13 +122,16 @@ async function guardedFetch(url: string, init: RequestInit): Promise<Response> {
   await ensurePublicHost(u.hostname);
 
   const options = { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) };
-  if (!proxyEnabled()) {
+
+  // 分流的唯一依据是当前会话：只有链动小铺的会话会把 useProxy 置真（见 proxy.ts）。
+  // 未配置代理、非链动小铺、以及任何会话之外的请求，都走本机出口直连。
+  if (!proxySessionActive()) {
     await throttleHost(u.hostname, "direct");
     return fetch(url, options);
   }
 
-  // 池里总有个别代理临时不通。一个坏出口不该让整家店铺采集失败：
-  // 摘掉它换下一个重试，重试次数封顶避免在整池都挂时空转。
+  // 快代理的临时 IP 只活 1–5 分钟，过期表现为连接错误而非站点错误。
+  // 一个过期出口不该让整家店铺采集失败：换一个重提，重试次数封顶避免额度被空转烧掉。
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < PROXY_ATTEMPTS; attempt += 1) {
     const selected = await resolveCurrentProxy();
@@ -138,14 +141,16 @@ async function guardedFetch(url: string, init: RequestInit): Promise<Response> {
     try {
       return (await undiciFetch(url, { ...options, dispatcher: dispatcherFor(proxy) } as any)) as unknown as Response;
     } catch (err) {
-      // 区分「代理挂了」与「站点拒绝了」：只有前者才拉黑代理并换出口重试，
+      // 区分「代理挂了」与「站点拒绝了」：只有前者才换出口重试，
       // 站点侧的错误要原样抛出，交给上层的熔断/自愈逻辑处理。
       if (!isProxyError(err)) throw err;
       reportProxyFailure(selected);
       lastErr = new Error(`代理 ${proxy.server} 不可用：${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  throw lastErr ?? new Error("代理池无可用出口。");
+  // 到这里说明这家店铺该走代理却没有可用出口。不静默降级为直连——
+  // 链动小铺直连必被风控拦，那样只会把「代理没配好」伪装成「站点挂了」。
+  throw lastErr ?? new Error("代理已启用但提取不到可用出口（快代理额度耗尽或提取接口异常）。");
 }
 
 async function parseJsonResponse(response: Response, url: string): Promise<any> {

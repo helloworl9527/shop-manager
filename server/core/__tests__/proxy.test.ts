@@ -1,134 +1,160 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import {
-  parseProxyLine, parseProxyList, loadProxyPool, resetProxyPool, proxyPoolEnabled,
-  withProxySession, currentProxy, reportProxyFailure, isProxyError,
+  isLiandongSource, withProxySession, proxySessionActive, proxyEnabled,
+  resolveCurrentProxy, reportProxyFailure, resetProxyState, isProxyError,
 } from "../proxy";
 
-let dir = "";
-function writePool(lines: string[]): string {
-  const file = path.join(dir, "proxies.txt");
-  writeFileSync(file, lines.join("\n"), "utf8");
-  return file;
+const KDL_ENV = [
+  "SHOP_PROXY_KDL_SECRET_ID", "SHOP_PROXY_KDL_SIGNATURE",
+  "SHOP_PROXY_KDL_USERNAME", "SHOP_PROXY_KDL_PASSWORD",
+  "SHOP_PROXY_ENABLED",
+] as const;
+
+/** 让 proxyEnabled() 为真，但不真的去调快代理提取接口。 */
+function configureKdl(): void {
+  process.env.SHOP_PROXY_KDL_SECRET_ID = "test-secret";
+  process.env.SHOP_PROXY_KDL_SIGNATURE = "test-signature";
+  process.env.SHOP_PROXY_KDL_USERNAME = "u";
+  process.env.SHOP_PROXY_KDL_PASSWORD = "p";
 }
 
+const realFetch = globalThis.fetch;
+/** 记录提取接口被调用了几次——判断「有没有白烧一个计费 IP」的唯一硬指标。 */
+let extractCalls: string[] = [];
+
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "proxy-test-"));
-  resetProxyPool();
+  extractCalls = [];
+  resetProxyState();
+  globalThis.fetch = (async (input: any) => {
+    const url = String(input);
+    if (!url.startsWith("https://dps.kdlapi.com/")) return realFetch(input);
+    extractCalls.push(url);
+    return new Response("203.0.113.7:15818", { status: 200 });
+  }) as typeof fetch;
 });
+
 afterEach(() => {
-  delete process.env.SHOP_PROXY_FILE;
-  delete process.env.SHOP_PROXY_ENABLED;
-  resetProxyPool();
-  rmSync(dir, { recursive: true, force: true });
+  globalThis.fetch = realFetch;
+  for (const k of KDL_ENV) delete process.env[k];
+  resetProxyState();
 });
 
-describe("解析代理配置", () => {
-  it("host:port:user:pass", () => {
-    const e = parseProxyLine("gate2.example.com:7778:USER_A:secret")!;
-    expect(e.server).toBe("http://gate2.example.com:7778");
-    expect(e.username).toBe("USER_A");
-    expect(e.password).toBe("secret");
-    expect(e.url).toBe("http://USER_A:secret@gate2.example.com:7778");
+describe("判定店铺是不是链动小铺", () => {
+  it("已定型为 shopApi 的就是链动小铺", () => {
+    expect(isLiandongSource({ collectorKind: "shopApi", entryUrl: "https://pay.ldxp.cn/shop/FT7" })).toBe(true);
+    // 同为链动小铺系统，换个自建域名照样成立
+    expect(isLiandongSource({ collectorKind: "shopApi", entryUrl: "https://manfaka.com/shop/DJV2OHHM" })).toBe(true);
   });
 
-  it("URL 形式与无认证形式", () => {
-    expect(parseProxyLine("http://u:p@h.example.com:8080")!.username).toBe("u");
-    const bare = parseProxyLine("h.example.com:8080")!;
-    expect(bare.username).toBeUndefined();
-    expect(bare.url).toBe("http://h.example.com:8080");
+  it("其它已定型的类型一律直连", () => {
+    for (const kind of ["kami", "dujiao", "dujiaoHtml", "publicProductsApi", "productsListApi", "genericHtml", "browser"]) {
+      expect(isLiandongSource({ collectorKind: kind, entryUrl: "https://example.com/shop/X" })).toBe(false);
+    }
   });
 
-  it("密码含冒号不被截断", () => {
-    expect(parseProxyLine("h.example.com:8080:u:a:b:c")!.password).toBe("a:b:c");
+  it("kind 还是 auto/空时按 URL 形态判，与 detectCollector 的强信号一致", () => {
+    expect(isLiandongSource({ collectorKind: "auto", entryUrl: "https://pay.ldxp.cn/shop/newtoken" })).toBe(true);
+    expect(isLiandongSource({ collectorKind: null, entryUrl: "https://pay.qxvx.cn/item/ABC123" })).toBe(true);
+    // 库里现有的 auto 店铺都不是这个形态，不该被误判成要用代理
+    expect(isLiandongSource({ collectorKind: "auto", entryUrl: "https://shop.azx.us/" })).toBe(false);
+    expect(isLiandongSource({ collectorKind: "auto", entryUrl: "https://www.qianxun1688.com/links/F03287C6" })).toBe(false);
+    expect(isLiandongSource({ collectorKind: "auto", entryUrl: "https://tomfk.top/" })).toBe(false);
   });
 
-  it("跳过空行、注释与无效行", () => {
-    expect(parseProxyLine("")).toBeNull();
-    expect(parseProxyLine("# 注释")).toBeNull();
-    expect(parseProxyLine("nonsense")).toBeNull();
-    expect(parseProxyLine("h.example.com:notaport")).toBeNull();
-  });
-
-  it("去重，并丢弃指向内网的代理", () => {
-    const list = parseProxyList([
-      "a.example.com:1:u:p",
-      "a.example.com:1:u:p",
-      "127.0.0.1:8080:u:p",
-      "192.168.1.5:3128",
-      "b.example.com:2:u:p",
-    ].join("\n"));
-    expect(list.map((p) => p.server)).toEqual(["http://a.example.com:1", "http://b.example.com:2"]);
+  it("字段缺失不抛错，按直连处理", () => {
+    expect(isLiandongSource({})).toBe(false);
+    expect(isLiandongSource({ collectorKind: undefined, entryUrl: "不是个 URL" })).toBe(false);
   });
 });
 
-describe("池的启用", () => {
-  it("未配置文件时不启用", () => {
-    expect(proxyPoolEnabled()).toBe(false);
-    expect(currentProxy()).toBeNull();
+describe("代理的启用", () => {
+  it("未配快代理时整体关闭，所有店铺直连", async () => {
+    expect(proxyEnabled()).toBe(false);
+    await withProxySession(async () => {
+      expect(proxySessionActive()).toBe(false);
+      expect(await resolveCurrentProxy()).toBeNull();
+    }, { useProxy: true });
+    expect(extractCalls).toHaveLength(0);
   });
 
-  it("SHOP_PROXY_ENABLED=0 可强制关闭", () => {
-    process.env.SHOP_PROXY_FILE = writePool(["a.example.com:1:u:p"]);
+  it("SHOP_PROXY_ENABLED=0 可在保留凭据的前提下临时关掉", () => {
+    configureKdl();
     process.env.SHOP_PROXY_ENABLED = "0";
-    expect(loadProxyPool()).toEqual([]);
-  });
-
-  it("文件不存在时退化为直连而非报错", () => {
-    process.env.SHOP_PROXY_FILE = path.join(dir, "missing.txt");
-    expect(loadProxyPool()).toEqual([]);
+    expect(proxyEnabled()).toBe(false);
   });
 });
 
-describe("会话粘性与轮换", () => {
-  beforeEach(() => {
-    process.env.SHOP_PROXY_FILE = writePool([
-      "a.example.com:1:u:p", "b.example.com:2:u:p", "c.example.com:3:u:p",
-    ]);
+describe("只有链动小铺消耗代理额度", () => {
+  beforeEach(configureKdl);
+
+  it("链动小铺的会话提取出口 IP", async () => {
+    await withProxySession(async () => {
+      expect(proxySessionActive()).toBe(true);
+      const entry = (await resolveCurrentProxy())!;
+      expect(entry.server).toBe("http://203.0.113.7:15818");
+      expect(entry.username).toBe("u");
+    }, { useProxy: true });
+    expect(extractCalls).toHaveLength(1);
   });
 
-  it("同一会话内始终是同一个出口", async () => {
-    await withProxySession("src-1", async () => {
-      const first = currentProxy()!;
-      expect(currentProxy()!.id).toBe(first.id);
-      expect(currentProxy()!.id).toBe(first.id);
-    });
+  it("非链动小铺的会话完全不碰提取接口", async () => {
+    await withProxySession(async () => {
+      expect(proxySessionActive()).toBe(false);
+      expect(await resolveCurrentProxy()).toBeNull();
+    }, { useProxy: false });
+    expect(extractCalls).toHaveLength(0);
   });
 
-  it("不同会话轮换到不同出口", async () => {
-    const ids: string[] = [];
-    for (const key of ["s1", "s2", "s3"]) {
-      await withProxySession(key, async () => { ids.push(currentProxy()!.id); });
+  it("会话之外一律直连，不会静默提一个计费 IP", async () => {
+    expect(proxySessionActive()).toBe(false);
+    expect(await resolveCurrentProxy()).toBeNull();
+    expect(extractCalls).toHaveLength(0);
+  });
+
+  it("同一个临时 IP 跨店铺复用，不是每家店提一个", async () => {
+    for (const _ of [1, 2, 3]) {
+      await withProxySession(async () => { await resolveCurrentProxy(); }, { useProxy: true });
     }
-    expect(new Set(ids).size).toBe(3);
+    expect(extractCalls).toHaveLength(1);
   });
 
-  it("会话之外不使用代理（直连）", () => {
-    expect(currentProxy()).toBeNull();
-  });
-
-  it("代理失效后本会话改用其它出口，且不再分配给新会话", async () => {
-    let dead = "";
-    await withProxySession("s1", async () => {
-      const entry = currentProxy()!;
-      dead = entry.id;
+  it("出口失效后才重新提取", async () => {
+    await withProxySession(async () => {
+      const entry = (await resolveCurrentProxy())!;
       reportProxyFailure(entry);
-      expect(currentProxy()!.id).not.toBe(dead);
-    });
-    const later: string[] = [];
-    for (const key of ["s2", "s3", "s4", "s5"]) {
-      await withProxySession(key, async () => { later.push(currentProxy()!.id); });
-    }
-    expect(later).not.toContain(dead);
+      await resolveCurrentProxy();
+    }, { useProxy: true });
+    expect(extractCalls).toHaveLength(2);
   });
 
-  it("全部代理都在冷却时仍放行，不至于整轮采集失败", async () => {
-    for (const key of ["s1", "s2", "s3"]) {
-      await withProxySession(key, async () => { reportProxyFailure(currentProxy()!); });
-    }
-    await withProxySession("s9", async () => { expect(currentProxy()).not.toBeNull(); });
+  it("直连会话里的失败不会连累代理缓存", async () => {
+    let entry: any = null;
+    await withProxySession(async () => { entry = await resolveCurrentProxy(); }, { useProxy: true });
+    await withProxySession(async () => {
+      reportProxyFailure({ id: "别家:1", server: "http://别家:1", url: "http://别家:1" });
+    }, { useProxy: false });
+    await withProxySession(async () => {
+      expect((await resolveCurrentProxy())!.id).toBe(entry.id);
+    }, { useProxy: true });
+    expect(extractCalls).toHaveLength(1);
+  });
+});
+
+describe("提取接口异常时的处置", () => {
+  beforeEach(configureKdl);
+
+  it("提取失败返回 null，由上层决定是报错还是直连", async () => {
+    globalThis.fetch = (async () => new Response("", { status: 503 })) as typeof fetch;
+    await withProxySession(async () => {
+      expect(await resolveCurrentProxy()).toBeNull();
+    }, { useProxy: true });
+  });
+
+  it("提取接口回吐内网地址时丢弃，不让代理成为访问内网的跳板", async () => {
+    globalThis.fetch = (async () => new Response("127.0.0.1:8080", { status: 200 })) as typeof fetch;
+    await withProxySession(async () => {
+      expect(await resolveCurrentProxy()).toBeNull();
+    }, { useProxy: true });
   });
 });
 
