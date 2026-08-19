@@ -22,6 +22,16 @@ function listable(alias = "o"): string {
 
 const LISTABLE = listable();
 
+// 「有货」和「库存紧张」同档：两者都能买到，差别只是店家标的库存多少，
+// 不该让一个 ¥682 有货的排在 ¥455 库存紧张的前面——这是比价工具，价格才是首要标准。
+// 缺货(2) 与不可用/缺数据(3) 仍然排在后面。
+const SALE_BUCKET = "CASE WHEN availability_rank <= 1 THEN 0 ELSE availability_rank END";
+
+/** SALE_BUCKET 的 TS 版本，用于内存排序。 */
+function saleBucket(availabilityRank: number): number {
+  return availabilityRank <= 1 ? 0 : availabilityRank;
+}
+
 interface OfferJoinRow {
   id: string; search_group_id: string; effective_canonical_product_id: string | null;
   source_id: string | null; source_title: string; source_name: string; source_store_name: string | null;
@@ -197,7 +207,7 @@ export function listProducts(
          SELECT *,
                 ROW_NUMBER() OVER (
                   PARTITION BY search_group_id
-                  ORDER BY availability_rank ASC, price ASC, id ASC
+                  ORDER BY ${SALE_BUCKET} ASC, price ASC, id ASC
                 ) AS rn
          FROM filtered
        ),
@@ -276,12 +286,12 @@ export function searchOffers(
   matched.sort((a, b) => {
     if (opts.sort === "price") {
       return a.row.price - b.row.price
-        || a.row.availability_rank - b.row.availability_rank
+        || saleBucket(a.row.availability_rank) - saleBucket(b.row.availability_rank)
         || b.score - a.score;
     }
     return b.score - a.score
-      || a.row.availability_rank - b.row.availability_rank
-      || a.row.price - b.row.price;
+      || a.row.price - b.row.price
+      || saleBucket(a.row.availability_rank) - saleBucket(b.row.availability_rank);
   });
 
   const total = matched.length;
@@ -310,7 +320,7 @@ export function getProductOffers(db: SqliteDatabase, canonicalId: string): { can
        FROM raw_offers o
        LEFT JOIN sources s ON s.id = o.source_id
        WHERE o.effective_canonical_product_id=? AND o.hidden=0
-       ORDER BY availability_rank ASC, price ASC`,
+       ORDER BY ${SALE_BUCKET} ASC, price ASC`,
     )
     .all(canonicalId) as any[];
   const offers: ProductOffer[] = rows.map((r) => ({
@@ -605,7 +615,8 @@ function matchesOfferTitle(value: string, query: ParsedSearchQuery): boolean {
 }
 
 function offerToCard(row: OfferJoinRow, group: OfferJoinRow[], query: ParsedSearchQuery | null): ProductCard {
-  group.sort((a, b) => a.availability_rank - b.availability_rank || a.price - b.price);
+  // 代表条目决定卡片上显示的 lowestPrice，同档内按价格取最低才对得起「最低价」这个名字
+  group.sort((a, b) => saleBucket(a.availability_rank) - saleBucket(b.availability_rank) || a.price - b.price);
   const rep = group[0] ?? row;
   const stores = new Set(group.map((o) => o.source_store_name || o.source_name));
   const matchedTitle = query && matchesOfferTitle(row.source_title, query) ? row.source_title : null;
