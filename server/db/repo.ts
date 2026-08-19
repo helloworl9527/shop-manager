@@ -265,6 +265,14 @@ export function markSourceSuccess(db: SqliteDatabase, sourceId: string, status: 
   }
 }
 
+/** 最近若干轮采集的 message，最新在前。用于判断「连续多少轮采到 0 条」。 */
+export function recentRunMessages(db: SqliteDatabase, sourceId: string, limit: number): (string | null)[] {
+  return db
+    .prepare("SELECT message FROM crawl_runs WHERE source_id=? ORDER BY started_at DESC, rowid DESC LIMIT ?")
+    .all(sourceId, limit)
+    .map((row: any) => (row?.message ?? null) as string | null);
+}
+
 /** 记录失败：累加 consecutive_failures，只影响来源健康；旧报价保留当前可见性。 */
 export function markSourceFailure(db: SqliteDatabase, sourceId: string, message: string, at: string): number {
   const prev = (db.prepare("SELECT consecutive_failures AS n FROM sources WHERE id=?").get(sourceId) as { n: number } | undefined)?.n ?? 0;

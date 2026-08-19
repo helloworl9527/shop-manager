@@ -72,6 +72,10 @@ export const collectShopApi: Collector = async (target, http) => {
   const base = target.baseUrl;
   const tokens = await discoverShopTokens(target, http);
   const offers: CollectorOffer[] = [];
+  // 站点用业务码而非 HTTP 状态表达「这个店铺没了」：code=0 + msg=「店铺链接不存在」。
+  // 早前这里直接 continue 把它吞掉，于是「店铺已删」和「店主清空了商品」都表现为
+  // 采到 0 条，下游无从区分，自动停用也就无从谈起。收集起来，全军覆没时抛出去。
+  const infoRejections: string[] = [];
 
   if (!tokens.length) {
     throw new Error("未找到店铺 token，需要至少一个 /shop/<token> 或 /item/<goods_key> 链接。");
@@ -79,7 +83,10 @@ export const collectShopApi: Collector = async (target, http) => {
 
   for (const token of tokens) {
     const shopInfo = await postShopApiWithRetry(http, `${base}/shopApi/Shop/info`, { token, category_key: "" }, `${base}/shop/${token}`);
-    if (shopInfo?.code !== 1 || !shopInfo?.data) continue;
+    if (shopInfo?.code !== 1 || !shopInfo?.data) {
+      infoRejections.push(cleanText(String(shopInfo?.msg ?? "")) || "店铺信息接口返回异常");
+      continue;
+    }
 
     const storeName = cleanText(shopInfo.data.nickname || target.sourceStoreName || target.sourceName);
     const sourceUrl = shopInfo.data.link || `${base}/shop/${token}`;
@@ -136,6 +143,11 @@ export const collectShopApi: Collector = async (target, http) => {
         if (items.length < 100) break;
       }
     }
+  }
+
+  // 只有「所有 token 都被拒且一条都没采到」才算店铺失效——多 token 时其中一个失效是正常的。
+  if (!offers.length && infoRejections.length === tokens.length) {
+    throw new Error(`店铺信息接口拒绝：${infoRejections[0]}`);
   }
 
   return offers;

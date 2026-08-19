@@ -6,6 +6,7 @@ import { collectBrowser, collectShopApiViaBrowser, isChallengeBlockedError } fro
 import { normalizeHostname } from "../collectors/util";
 import { httpClient, type HttpClient } from "./http";
 import { isLiandongSource, withProxySession } from "./proxy";
+import { retireIfLongEmpty, retireIfPermanentFailure } from "./retirement";
 import { shouldDelistMissing, type CollectionMethod } from "./freshness";
 import { shouldFallbackToBrowser, isRetryableUpstreamError, isHostThrottledError } from "./waf";
 import { canAutoUpdateStoreName, resolveStoreName } from "./sourceProbe";
@@ -309,10 +310,16 @@ async function collectSourceInner(db: SqliteDatabase, source: SourceRow, deps: C
 
     const finishedAt = nowIso();
     const status: SourceStatus = outcome.partialMessage ? "partial" : "success";
+    // 空店连续多轮才停用。放在 recordCrawlRun 之前：本轮结果作为参数参与计数，
+    // 落库的却是停用说明，连续计数由此断开（详见 retireIfLongEmpty）。
+    const retiredEmpty = deps.resolveCollector ? null : retireIfLongEmpty(db, source.id, outcome.partialMessage);
+    const runMessage = retiredEmpty
+      ? `${retiredEmpty}（本轮：${outcome.partialMessage}）`
+      : outcome.partialMessage ?? (fellBackToBrowser ? "HTTP 被风控，已自动改用浏览器采集" : null);
     recordCrawlRun(db, {
       id: randomUUID(), sourceId: source.id, sourceName, mode: usedMethod, status,
       startedAt, finishedAt, successCount: outcome.written, failureCount: 0,
-      message: outcome.partialMessage ?? (fellBackToBrowser ? "HTTP 被风控，已自动改用浏览器采集" : null),
+      message: runMessage,
       details: {
         fullSnapshot: true,
         seenCount: outcome.seenCount,
@@ -344,7 +351,9 @@ async function collectSourceInner(db: SqliteDatabase, source: SourceRow, deps: C
     return {
       ...base, sourceName, status,
       offerCount: collected.length, written: outcome.written, seenCount: outcome.seenCount, delisted: outcome.delisted,
-      ...(outcome.partialMessage ? { message: outcome.partialMessage } : {}),
+      // 只在 partial / 被停用时带 message：runJob 会把它写进任务 last_error，
+      // 成功轮次不该往那里塞「已回退浏览器」这类过程信息。
+      ...(runMessage && (outcome.partialMessage || retiredEmpty) ? { message: runMessage } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -374,12 +383,17 @@ async function collectSourceInner(db: SqliteDatabase, source: SourceRow, deps: C
         method: persistenceMethod(source, resolvedKind),
       });
     }
-    markSourceFailure(db, source.id, message, finishedAt);
+    const consecutiveFailures = markSourceFailure(db, source.id, message, finishedAt);
+    // 店铺已删 / 接口 404 这类不会自己恢复的失效直接停用，免得每天白采一轮
+    // （链动小铺还要为此烧一个按个数计费的代理 IP）。
+    const retired = deps.resolveCollector ? null : retireIfPermanentFailure(db, source.id, message, consecutiveFailures);
+    const finalMessage = retired ? `${message}；${retired}` : message;
     recordCrawlRun(db, {
       id: randomUUID(), sourceId: source.id, sourceName: source.name, mode: usedMethod, status: "failed",
-      startedAt, finishedAt, successCount: 0, failureCount: 1, message, details: { resolvedKind, evidence: detectEvidence, attempts: detectAttempts, fellBackToBrowser },
+      startedAt, finishedAt, successCount: 0, failureCount: 1, message: finalMessage,
+      details: { resolvedKind, evidence: detectEvidence, attempts: detectAttempts, fellBackToBrowser, ...(retired ? { retired: true } : {}) },
     });
-    return { ...base, status: "failed", offerCount: 0, written: 0, seenCount: 0, delisted: 0, message };
+    return { ...base, status: "failed", offerCount: 0, written: 0, seenCount: 0, delisted: 0, message: finalMessage };
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     releaseSourceLock(db, source.id, owner);
