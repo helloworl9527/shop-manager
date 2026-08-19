@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
-import { api, type Favorite, type FavoriteSourceSummary } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type Favorite, type FavoriteStore } from "../api";
+
+const UNCATEGORIZED = "未分类";
 
 export function FavoritesPage({
   notify,
@@ -7,13 +9,20 @@ export function FavoritesPage({
   notify?: (m: string) => void;
 }) {
   const [items, setItems] = useState<Favorite[]>([]);
-  const [sources, setSources] = useState<FavoriteSourceSummary[]>([]);
+  const [stores, setStores] = useState<FavoriteStore[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = () => Promise.all([api.listFavorites(), api.listFavoriteSources()])
-    .then(([favorites, favoriteSources]) => {
+  const [adding, setAdding] = useState(false);
+  const [url, setUrl] = useState("");
+  const [category, setCategory] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = () => Promise.all([api.listFavorites(), api.listFavoriteStores()])
+    .then(([favorites, favoriteStores]) => {
       setItems(favorites);
-      setSources(favoriteSources);
+      setStores(favoriteStores.items);
+      setCategories(favoriteStores.categories);
       setErr(null);
     })
     .catch((e) => setErr((e as Error).message));
@@ -24,24 +33,119 @@ export function FavoritesPage({
     catch (e) { notify?.(`移除失败：${(e as Error).message}`); }
   };
 
+  // 分组展示：有分类的在前（按名排序），未分类兜底放最后
+  const grouped = useMemo(() => {
+    const map = new Map<string, FavoriteStore[]>();
+    for (const s of stores) {
+      const key = s.category ?? UNCATEGORIZED;
+      const list = map.get(key);
+      if (list) list.push(s);
+      else map.set(key, [s]);
+    }
+    return [...map.entries()].sort((a, b) =>
+      a[0] === UNCATEGORIZED ? 1 : b[0] === UNCATEGORIZED ? -1 : a[0].localeCompare(b[0], "zh"));
+  }, [stores]);
+
+  const addStore = async () => {
+    const value = url.trim();
+    if (!value) return;
+    setBusy(true);
+    try {
+      const r = await api.addFavoriteStore({ url: value, category: category.trim() || undefined });
+      await load();
+      setUrl("");
+      setAdding(false);
+      const via = r.nameVia === "proxy" ? "（走代理取到店铺名）" : r.nameVia === "fallback" ? "（未能取到店铺名，已用链接兜底，可点名字改）" : "";
+      notify?.(r.created ? `已收藏「${r.row.name}」${via}` : `已在收藏里：「${r.row.name}」`);
+    } catch (e) {
+      notify?.(`收藏失败：${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rename = async (s: FavoriteStore) => {
+    const next = window.prompt("店铺名称", s.name);
+    if (next == null || !next.trim() || next.trim() === s.name) return;
+    try { await api.updateFavoriteStore(s.id, { name: next.trim() }); await load(); notify?.("已改名"); }
+    catch (e) { notify?.(`改名失败：${(e as Error).message}`); }
+  };
+
+  const recategorize = async (s: FavoriteStore) => {
+    const next = window.prompt(`分类（留空表示${UNCATEGORIZED}）\n已有：${categories.join("、") || "无"}`, s.category ?? "");
+    if (next == null) return;
+    try { await api.updateFavoriteStore(s.id, { category: next.trim() || null }); await load(); notify?.("已更新分类"); }
+    catch (e) { notify?.(`更新分类失败：${(e as Error).message}`); }
+  };
+
+  const removeStore = async (s: FavoriteStore) => {
+    if (!window.confirm(`移除收藏「${s.name}」？${s.collected ? "\n这家同时是采集店铺，移除后后台的 ★ 也会取消（不影响采集）。" : ""}`)) return;
+    try { await api.removeFavoriteStore(s.id); await load(); notify?.("已移除收藏店铺"); }
+    catch (e) { notify?.(`移除失败：${(e as Error).message}`); }
+  };
+
   return (
     <>
     <div className="card">
       <div className="row" style={{ marginBottom: 10, justifyContent: "space-between" }}>
-        <strong style={{ fontSize: 14 }}>收藏店铺（{sources.length}）</strong>
-        <span className="muted">点击店铺直接打开店铺链接</span>
-      </div>
-      {sources.length === 0 ? (
-        <div className="empty">还没有收藏店铺。</div>
-      ) : (
-        <div className="source-fav-grid">
-          {sources.map((s) => (
-            <a key={s.id} className="source-fav-card" href={s.entry_url} target="_blank" rel="noreferrer">
-              <span className="source-fav-title">★ {s.name}</span>
-              <span className="muted">{s.entry_url}</span>
-            </a>
-          ))}
+        <strong style={{ fontSize: 14 }}>收藏店铺（{stores.length}）</strong>
+        <div className="row">
+          <span className="muted">点击店铺名打开链接 · ★ 表示同时是采集店铺</span>
+          <button className="btn primary" onClick={() => setAdding((v) => !v)}>{adding ? "取消" : "+ 新增链接"}</button>
         </div>
+      </div>
+
+      {adding && (
+        <div className="row" style={{ marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+          <input
+            style={{ flex: "2 1 320px" }}
+            placeholder="店铺链接，如 https://pay.ldxp.cn/shop/pdxai"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) void addStore(); }}
+            autoFocus
+          />
+          <input
+            style={{ flex: "1 1 160px" }}
+            placeholder="分类（可留空）"
+            list="fav-store-categories"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) void addStore(); }}
+          />
+          <datalist id="fav-store-categories">
+            {categories.map((c) => <option key={c} value={c} />)}
+          </datalist>
+          <button className="btn primary" onClick={() => void addStore()} disabled={busy || !url.trim()}>
+            {busy ? "识别店铺名…" : "收藏"}
+          </button>
+          <span className="muted" style={{ flexBasis: "100%" }}>只收藏链接、探测一次店铺名，不采集商品。</span>
+        </div>
+      )}
+
+      {stores.length === 0 ? (
+        <div className="empty">还没有收藏店铺。点「+ 新增链接」直接添加，或在后台给采集店铺点 ★。</div>
+      ) : (
+        grouped.map(([group, list]) => (
+          <div key={group} style={{ marginBottom: 14 }}>
+            <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>{group}（{list.length}）</div>
+            <div className="source-fav-grid">
+              {list.map((s) => (
+                <div key={s.id} className="source-fav-card">
+                  <a className="source-fav-title" href={s.url} target="_blank" rel="noreferrer">
+                    {s.collected ? "★ " : ""}{s.name}
+                  </a>
+                  <span className="muted">{s.url}</span>
+                  <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                    <button className="btn" onClick={() => void rename(s)}>改名</button>
+                    <button className="btn" onClick={() => void recategorize(s)}>分类</button>
+                    <button className="btn danger" onClick={() => void removeStore(s)}>移除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
       )}
     </div>
 

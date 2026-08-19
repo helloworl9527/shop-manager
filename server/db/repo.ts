@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from "./connection";
+import { syncFavoriteStoreForSource } from "./favoriteStores";
 import type { CollectorOffer, CollectorTarget } from "../collectors/types";
 import { classifyOffer } from "../catalog/catalog";
 import { computeFreshnessFields, type CollectionMethod } from "../core/freshness";
@@ -429,6 +430,8 @@ export function setSourceFavorite(db: SqliteDatabase, id: string, favorite: bool
      SET favorite=@favorite, favorited_at=@favoritedAt, updated_at=@at
      WHERE id=@id`,
   ).run({ id, favorite: favorite ? 1 : 0, favoritedAt, at });
+  // 收藏页统一读 favorite_stores，这里不同步的话 ★ 点了不出现、取消了不消失。
+  syncFavoriteStoreForSource(db, current, favorite);
   return getSource(db, id);
 }
 

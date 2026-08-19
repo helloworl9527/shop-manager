@@ -26,6 +26,11 @@ import {
   type VerifyDeps,
 } from "../core/verify";
 import { migrateSourceKinds, normalizeSourceUrl, probeSourceUrl, sourceNameFromUrl, sourceSlugFromUrl } from "../core/sourceProbe";
+import { probeStoreName } from "../core/storeName";
+import {
+  addFavoriteStore, getFavoriteStore, listFavoriteStoreCategories, listFavoriteStores,
+  refreshAutoName, removeFavoriteStore, updateFavoriteStore,
+} from "../db/favoriteStores";
 import type { CollectorOffer } from "../collectors/types";
 
 export interface BuildOptions {
@@ -94,6 +99,67 @@ export function buildServer(db: SqliteDatabase, options: BuildOptions = {}): Fas
   app.get("/api/sources/favorites", async () => ({ items: listFavoriteSources(db) }));
 
   app.get("/api/sources/audit", async () => ({ methodDrift: listSourceMethodDrift(db) }));
+
+  // ---- 收藏的店铺链接 ----
+  // 与采集完全无关：只记住入口 + 探测一次店铺名。后台 ★ 的采集店铺会同步进同一张表。
+  app.get("/api/favorite-stores", async () => ({
+    items: listFavoriteStores(db),
+    categories: listFavoriteStoreCategories(db),
+  }));
+
+  app.post("/api/favorite-stores", async (req, reply) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    if (!b.url) return reply.code(400).send({ error: "url 必填" });
+    let probed: { url: string; name: string; via: string };
+    try {
+      probed = await probeStoreName(String(b.url), { http: deps.http });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+    // 收藏一个已在采集的店铺 = 给它点 ★。不认领的话同一家店会在收藏页出现两条，
+    // 而且后台星是暗的、收藏页却有，两边对不上。
+    const known = findSourceByEntryUrl(db, probed.url);
+    if (known && !known.favorite) setSourceFavorite(db, known.id, true);
+
+    // 用户填了名字就以用户为准，不被探测结果覆盖
+    const manual = String(b.name ?? "").trim();
+    const r = addFavoriteStore(db, {
+      url: probed.url,
+      name: manual || probed.name,
+      nameSource: manual ? "manual" : "auto",
+      ...(b.category !== undefined ? { category: b.category } : {}),
+      note: b.note ?? null,
+    });
+    if (manual && !r.created) updateFavoriteStore(db, r.row.id, { name: manual });
+    // 已存在的行可能还叫「域名 / token」（★ 同步建行时用的是采集店铺当时的名字），
+    // 探测拿到真名就刷上去；手动改过名的不动。
+    else if (!manual && probed.via !== "fallback") refreshAutoName(db, r.row.id, probed.name);
+    return reply.code(r.created ? 201 : 200).send({
+      row: getFavoriteStore(db, r.row.id),
+      created: r.created,
+      nameVia: manual ? "manual" : probed.via,
+    });
+  });
+
+  app.patch("/api/favorite-stores/:id", async (req, reply) => {
+    const id = String((req.params as any).id);
+    if (!getFavoriteStore(db, id)) return reply.code(404).send({ error: "收藏不存在" });
+    const b = (req.body ?? {}) as Record<string, any>;
+    try {
+      return { updated: true, row: updateFavoriteStore(db, id, b) };
+    } catch (err) {
+      const code = (err as any)?.statusCode ?? 400;
+      return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.delete("/api/favorite-stores/:id", async (req, reply) => {
+    const r = removeFavoriteStore(db, String((req.params as any).id));
+    if (!r.removed) return reply.code(404).send({ error: "收藏不存在" });
+    // 这条是 ★ 同步来的 → 同时熄灭后台的 ★，否则星是亮的、收藏却没了
+    if (r.sourceId) setSourceFavorite(db, r.sourceId, false);
+    return { removed: true };
+  });
 
   app.post("/api/sources/probe", async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, any>;

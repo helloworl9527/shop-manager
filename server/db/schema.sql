@@ -165,3 +165,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_source ON collection_jobs(sourc
 -- 全量任务同时只允许一个在跑
 CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_all ON collection_jobs(job_type)
   WHERE job_type = 'all' AND status IN ('pending','running');
+
+-- 收藏的店铺链接。与 sources 分开：收藏只是"记住这个店铺入口"，不参与采集。
+-- source_id 非空 = 这条是后台给采集店铺点 ★ 同步过来的（前台显示 ★ 标记）。
+CREATE TABLE IF NOT EXISTS favorite_stores (
+  id          TEXT PRIMARY KEY,
+  url         TEXT NOT NULL UNIQUE,            -- 规范化后的店铺入口链接
+  name        TEXT NOT NULL,
+  name_source TEXT NOT NULL DEFAULT 'auto',    -- auto/manual：手动改过名就不再被自动覆盖
+  category    TEXT,                            -- NULL = 未分类
+  note        TEXT,
+  source_id   TEXT REFERENCES sources(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fav_stores_category ON favorite_stores(category, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fav_stores_source ON favorite_stores(source_id) WHERE source_id IS NOT NULL;

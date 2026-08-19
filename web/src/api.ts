@@ -99,6 +99,12 @@ export interface FavoriteSourceSummary {
   last_success_at: string | null; listable_product_count: number; latest_offer_at: string | null;
 }
 
+export interface FavoriteStore {
+  id: string; url: string; name: string; name_source: string;
+  category: string | null; note: string | null; source_id: string | null;
+  collected: boolean; created_at: string; updated_at: string;
+}
+
 function qs(params: Record<string, string | number | boolean | undefined>): string {
   const u = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") u.set(k, String(v));
@@ -117,6 +123,13 @@ export const api = {
   favoriteIds: () => http<{ ids: string[] }>("GET", "/api/favorites/ids").then((r) => r.ids),
   addFavorite: (offerId: string) => http<{ ok: boolean; created: boolean }>("POST", "/api/favorites", { offerId }),
   removeFavorite: (offerId: string) => http<{ removed: boolean }>("DELETE", `/api/favorites/${encodeURIComponent(offerId)}`),
+  listFavoriteStores: () => http<{ items: FavoriteStore[]; categories: string[] }>("GET", "/api/favorite-stores"),
+  addFavoriteStore: (body: { url: string; category?: string; name?: string; note?: string }) =>
+    http<{ row: FavoriteStore; created: boolean; nameVia: string }>("POST", "/api/favorite-stores", body),
+  updateFavoriteStore: (id: string, patch: { name?: string; category?: string | null; note?: string | null }) =>
+    http<{ updated: boolean; row: FavoriteStore }>("PATCH", `/api/favorite-stores/${encodeURIComponent(id)}`, patch),
+  removeFavoriteStore: (id: string) =>
+    http<{ removed: boolean }>("DELETE", `/api/favorite-stores/${encodeURIComponent(id)}`),
   listSources: () => http<{ items: Source[] }>("GET", "/api/sources").then((r) => r.items),
   listFavoriteSources: () => http<{ items: FavoriteSourceSummary[] }>("GET", "/api/sources/favorites").then((r) => r.items),
   setSourceFavorite: (id: string, favorite: boolean) =>
