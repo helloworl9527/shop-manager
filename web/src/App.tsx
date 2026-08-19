@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SourcesPanel } from "./admin/SourcesPanel";
 import { LogsPanel } from "./admin/LogsPanel";
 import { FrontBrowse } from "./front/FrontBrowse";
@@ -7,6 +7,12 @@ import { FavoritesPage } from "./front/FavoritesPage";
 
 type View = "front" | "admin";
 type Tab = "sources" | "logs";
+type Theme = "light" | "dark";
+
+/** 初值取 index.html 里那段脚本已经写好的 data-theme，避免和它打架、闪一次。 */
+function initialTheme(): Theme {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
 
 export default function App() {
   const [view, setView] = useState<View>("front");
@@ -16,6 +22,24 @@ export default function App() {
   const [sourceId, setSourceId] = useState<string | undefined>();
   const [sourceName, setSourceName] = useState<string | undefined>();
   const [toast, setToast] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("theme", theme); } catch { /* 隐私模式下 localStorage 会抛，忽略即可 */ }
+  }, [theme]);
+
+  // 没手动选过就跟随系统切换（选过之后以本人选择为准）
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e: MediaQueryListEvent) => {
+      let saved: string | null = null;
+      try { saved = localStorage.getItem("theme"); } catch { /* 同上 */ }
+      if (!saved) setTheme(e.matches ? "dark" : "light");
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -28,6 +52,14 @@ export default function App() {
         <h1>店铺商品管理</h1>
         <span className="badge b-muted">{view === "admin" ? "后台" : "前台"}</span>
         <span className="spacer" />
+        <button
+          className="btn theme-btn"
+          title={theme === "dark" ? "切换到日间模式" : "切换到夜间模式"}
+          aria-label={theme === "dark" ? "切换到日间模式" : "切换到夜间模式"}
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
         <button className="btn primary" onClick={() => setView(view === "admin" ? "front" : "admin")}>
           {view === "admin" ? "前台预览" : "进入后台"}
         </button>
