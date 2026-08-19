@@ -13,6 +13,9 @@ export function FavoritesPage({
   const [categories, setCategories] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftCategory, setDraftCategory] = useState("");
   const [adding, setAdding] = useState(false);
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
@@ -69,23 +72,29 @@ export function FavoritesPage({
     }
   };
 
-  const rename = async (s: FavoriteStore) => {
-    const next = window.prompt("店铺名称", s.name);
-    if (next == null || !next.trim() || next.trim() === s.name) return;
-    try { await api.updateFavoriteStore(s.id, { name: next.trim() }); await load(); notify?.("已改名"); }
-    catch (e) { notify?.(`改名失败：${(e as Error).message}`); }
+  const openEditor = (s: FavoriteStore) => {
+    setEditingId(s.id);
+    setDraftName(s.name);
+    setDraftCategory(s.category ?? "");
   };
+  const closeEditor = () => setEditingId(null);
 
-  const recategorize = async (s: FavoriteStore) => {
-    const next = window.prompt(`分类（留空表示${UNCATEGORIZED}）\n已有：${categories.join("、") || "无"}`, s.category ?? "");
-    if (next == null) return;
-    try { await api.updateFavoriteStore(s.id, { category: next.trim() || null }); await load(); notify?.("已更新分类"); }
-    catch (e) { notify?.(`更新分类失败：${(e as Error).message}`); }
+  const saveStore = async (s: FavoriteStore) => {
+    const name = draftName.trim();
+    if (!name) { notify?.("名称不能为空"); return; }
+    const category = draftCategory.trim();
+    if (name === s.name && category === (s.category ?? "")) { closeEditor(); return; }
+    try {
+      await api.updateFavoriteStore(s.id, { name, category: category || null });
+      await load();
+      closeEditor();
+      notify?.("已保存");
+    } catch (e) { notify?.(`保存失败：${(e as Error).message}`); }
   };
 
   const removeStore = async (s: FavoriteStore) => {
     if (!window.confirm(`移除收藏「${s.name}」？${s.collected ? "\n这家同时是采集店铺，移除后后台的 ★ 也会取消（不影响采集）。" : ""}`)) return;
-    try { await api.removeFavoriteStore(s.id); await load(); notify?.("已移除收藏店铺"); }
+    try { await api.removeFavoriteStore(s.id); await load(); closeEditor(); notify?.("已移除收藏店铺"); }
     catch (e) { notify?.(`移除失败：${(e as Error).message}`); }
   };
 
@@ -125,15 +134,16 @@ export function FavoritesPage({
             onChange={(e) => setCategory(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !busy) void addStore(); }}
           />
-          <datalist id="fav-store-categories">
-            {categories.map((c) => <option key={c} value={c} />)}
-          </datalist>
           <button className="btn primary" onClick={() => void addStore()} disabled={busy || !url.trim()}>
             {busy ? "保存中…" : "收藏"}
           </button>
           <span className="muted" style={{ flexBasis: "100%" }}>只记录链接与名称，不访问站点、不采集商品。名称之后随时可以点「改名」修改。</span>
         </div>
       )}
+
+      <datalist id="fav-store-categories">
+        {categories.map((c) => <option key={c} value={c} />)}
+      </datalist>
 
       {stores.length === 0 ? (
         <div className="empty">还没有收藏店铺。点「+ 新增链接」直接添加，或在后台给采集店铺点 ★。</div>
@@ -142,19 +152,50 @@ export function FavoritesPage({
           <div key={group} style={{ marginBottom: 14 }}>
             <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>{group}（{list.length}）</div>
             <div className="source-fav-grid">
-              {list.map((s) => (
-                <div key={s.id} className="source-fav-card">
-                  <a className="source-fav-title" href={s.url} target="_blank" rel="noreferrer">
-                    {s.collected ? "★ " : ""}{s.name}
-                  </a>
-                  <span className="muted">{s.url}</span>
-                  <div className="row" style={{ marginTop: 6, gap: 6 }}>
-                    <button className="btn" onClick={() => void rename(s)}>改名</button>
-                    <button className="btn" onClick={() => void recategorize(s)}>分类</button>
-                    <button className="btn danger" onClick={() => void removeStore(s)}>移除</button>
+              {list.map((s) => {
+                const editing = editingId === s.id;
+                return (
+                  <div key={s.id} className={`source-fav-card${editing ? " editing" : ""}`}>
+                    <a className="source-fav-title" href={s.url} target="_blank" rel="noreferrer" title={s.name}>
+                      {s.collected ? "★ " : ""}{s.name}
+                    </a>
+                    <span className="source-fav-url" title={s.url}>{s.url}</span>
+                    <button
+                      className="source-fav-edit"
+                      title={editing ? "收起" : "编辑"}
+                      aria-label={editing ? "收起" : "编辑"}
+                      aria-expanded={editing}
+                      onClick={() => (editing ? closeEditor() : openEditor(s))}
+                    >
+                      {editing ? "✕" : "✎"}
+                    </button>
+                    {editing && (
+                      <div className="source-fav-form">
+                        <input
+                          placeholder="店铺名称"
+                          value={draftName}
+                          onChange={(e) => setDraftName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") void saveStore(s); if (e.key === "Escape") closeEditor(); }}
+                          autoFocus
+                        />
+                        <input
+                          placeholder={`分类（留空为${UNCATEGORIZED}）`}
+                          list="fav-store-categories"
+                          value={draftCategory}
+                          onChange={(e) => setDraftCategory(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") void saveStore(s); if (e.key === "Escape") closeEditor(); }}
+                        />
+                        <div className="row">
+                          <button className="btn primary" onClick={() => void saveStore(s)}>保存</button>
+                          <button className="btn" onClick={closeEditor}>取消</button>
+                          <span className="spacer" />
+                          <button className="btn danger" onClick={() => void removeStore(s)}>移除</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))

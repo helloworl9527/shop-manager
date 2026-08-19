@@ -61,9 +61,25 @@ a.btn { text-decoration: none; display: inline-block; }
 .star:hover { transform: scale(1.1); }
 .star-btn { min-width: 34px; padding: 5px 8px; color: #b45309; }
 .source-fav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
-.source-fav-card { display: grid; gap: 5px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); text-align: left; text-decoration: none; cursor: pointer; }
+/* 整张卡片可点：标题里的链接用 ::after 铺满卡片（stretched link），
+   编辑按钮靠 z-index 浮在它上面。这样 HTML 仍然合法——按钮不能嵌在 <a> 里面。 */
+.source-fav-card { position: relative; display: grid; gap: 4px; width: 100%; padding: 10px 34px 10px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); text-align: left; }
 .source-fav-card:hover { border-color: #bfdbfe; background: #f9fafb; }
-.source-fav-title { font-size: 13px; font-weight: 600; color: #b45309; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-fav-card.editing { border-color: #bfdbfe; background: #f9fafb; }
+.source-fav-title { font-size: 13px; font-weight: 600; color: #b45309; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-fav-title::after { content: ""; position: absolute; inset: 0; border-radius: 8px; }
+.source-fav-card.editing .source-fav-title::after { content: none; }
+.source-fav-url { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 角标按钮：平时淡，hover 或展开时才明显，免得一排卡片被图标塞满 */
+.source-fav-edit { position: absolute; top: 6px; right: 6px; z-index: 1; width: 24px; height: 24px; padding: 0; line-height: 1;
+  display: grid; place-items: center; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; opacity: .45; }
+.source-fav-card:hover .source-fav-edit, .source-fav-edit:focus-visible { opacity: 1; }
+.source-fav-edit:hover { background: #fff; border-color: var(--line); color: var(--text); }
+.source-fav-card.editing .source-fav-edit { opacity: 1; }
+.source-fav-form { display: grid; gap: 6px; margin-top: 2px; }
+.source-fav-form input { font-size: 12.5px; padding: 5px 8px; }
+.source-fav-form .row { gap: 6px; }
+.source-fav-form .btn { font-size: 12px; padding: 4px 10px; }
 
 @media (max-width: 760px) {
   .form-grid { grid-template-columns: 1fr; }
