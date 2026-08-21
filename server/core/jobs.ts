@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SqliteDatabase } from "../db/connection";
-import { nowIso, getSource, listEnabledSources } from "../db/repo";
+import { nowIso, getSource, listEnabledSources, recomputeShadowedOffers } from "../db/repo";
 import { collectSource, runAllSources, type CollectDeps, type SourceResult, type RunAllResult } from "./orchestrator";
 
 export interface EnqueueResult {
@@ -63,9 +63,20 @@ export async function runJob(db: SqliteDatabase, jobId: string, deps: CollectDep
 
   db.prepare("UPDATE collection_jobs SET status='running', started_at=@at, attempts=attempts+1, updated_at=@at WHERE id=@id").run({ id: jobId, at: nowIso() });
 
+  // 一个源的写入会改变另一个源的遮蔽结果（同一商品链接谁更新），所以按任务整体重算一次，
+  // 而不是每采完一个源都重算——后者一轮全量要跑 50 多次，纯属浪费。
+  const settle = () => {
+    try {
+      recomputeShadowedOffers(db);
+    } catch {
+      // 去重只影响展示，算不出来也不该让整个任务判失败
+    }
+  };
+
   try {
     if (job.job_type === "all") {
       const r = await runAllSources(db, listEnabledSources(db), deps);
+      settle();
       const problemSummary = {
         failedSources: r.failedSources,
         partialSources: r.partialSources,
@@ -83,6 +94,7 @@ export async function runJob(db: SqliteDatabase, jobId: string, deps: CollectDep
       return { jobId, jobType: "source", status: "failed" };
     }
     const res = await collectSource(db, source, deps);
+    settle();
     const jobStatus = res.status === "skipped" ? "failed" : res.status; // success/partial/failed
     finishJob(db, jobId, jobStatus, res.message ?? null);
     return { jobId, jobType: "source", status: jobStatus, source: res };

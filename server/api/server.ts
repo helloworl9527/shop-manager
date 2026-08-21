@@ -8,7 +8,7 @@ import fastifyStatic from "@fastify/static";
 import type { SqliteDatabase } from "../db/connection";
 import {
   upsertSource, updateSource, deleteSource, getSource, findSourceByEntryUrl, findSiteWideDuplicate, persistSourceKind, resetSourceForReidentify, setSourceFavorite,
-  targetFromSource, upsertOffers, recordCrawlRun, markSourceSuccess, nowIso,
+  targetFromSource, upsertOffers, recordCrawlRun, markSourceSuccess, nowIso, recomputeShadowedOffers,
   type SourceRow,
 } from "../db/repo";
 import { listSourcesView, listProducts, searchOffers, getProductOffers, listCrawlRuns, listJobs, getJob, listSourceMethodDrift, listFavoriteSources } from "../db/data";
@@ -243,6 +243,8 @@ export function buildServer(db: SqliteDatabase, options: BuildOptions = {}): Fas
           details: { received: offers.length, seenCount: result.seenIds.length },
         });
         markSourceSuccess(db, id, "success", finishedAt);
+        // 预览商品可能与聚合源已收录的同一条报价撞链接，重算一次遮蔽再返回
+        recomputeShadowedOffers(db);
       }
     }
     return reply.code(201).send({ source: getSource(db, id) });

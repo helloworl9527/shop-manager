@@ -14,6 +14,7 @@ function platformSortCase(expr: string): string {
 function listable(alias = "o"): string {
   return `
   ${alias}.hidden = 0
+  AND ${alias}.shadowed = 0
   AND ${alias}.price IS NOT NULL
   AND ${alias}.url IS NOT NULL
   AND ${alias}.status != 'out_of_stock'
@@ -319,7 +320,7 @@ export function getProductOffers(db: SqliteDatabase, canonicalId: string): { can
               COALESCE(s.favorite, 0) AS source_favorite
        FROM raw_offers o
        LEFT JOIN sources s ON s.id = o.source_id
-       WHERE o.effective_canonical_product_id=? AND o.hidden=0
+       WHERE o.effective_canonical_product_id=? AND o.hidden=0 AND o.shadowed=0
        ORDER BY ${SALE_BUCKET} ASC, price ASC`,
     )
     .all(canonicalId) as any[];

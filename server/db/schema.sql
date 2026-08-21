@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS raw_offers (
   stock_count                    INTEGER,
   stock_text                     TEXT,                                     -- 定性库存原文（如「非常多」）
   hidden                         INTEGER NOT NULL DEFAULT 0,
+  shadowed                       INTEGER NOT NULL DEFAULT 0,  -- 1=同一商品链接被更新的另一个源采到，本行不对外展示（由 recomputeShadowedOffers 计算）
   canonical_product_id           TEXT REFERENCES canonical_products(id) ON DELETE SET NULL,  -- 自动分类
   manual_canonical_product_id    TEXT REFERENCES canonical_products(id) ON DELETE SET NULL,  -- 人工覆盖（优先）
   effective_canonical_product_id TEXT GENERATED ALWAYS AS (

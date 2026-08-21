@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { openDatabase, type SqliteDatabase } from "./connection";
+import { recomputeShadowedOffers } from "./repo";
 import { canonicalCatalog } from "../catalog/catalog";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,7 @@ function migrateSourceNameColumns(db: SqliteDatabase): void {
 /** 轻量迁移：对已存在的库补列（SQLite 无 ADD COLUMN IF NOT EXISTS，靠 try/catch 幂等）。 */
 function migrate(db: SqliteDatabase): void {
   addColumn(db, "raw_offers", "stock_text", "TEXT");
+  addColumn(db, "raw_offers", "shadowed", "INTEGER NOT NULL DEFAULT 0");
   migrateSourceNameColumns(db);
   addColumn(db, "sources", "kind_detected_at", "TEXT");
   addColumn(db, "sources", "kind_evidence", "TEXT");
@@ -62,6 +64,8 @@ function migrate(db: SqliteDatabase): void {
          updated_at=@at
      WHERE freshness_status='expired' AND status != 'out_of_stock'`,
   ).run({ at: new Date().toISOString() });
+  // 新增 shadowed 列后先回填一次，否则升级完到下一轮采集之间跨源重复报价仍会双份展示
+  recomputeShadowedOffers(db);
 }
 
 /**

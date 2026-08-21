@@ -513,3 +513,48 @@ export function upsertSource(db: SqliteDatabase, s: {
     enabled: s.enabled === false ? 0 : 1, notes: s.notes ?? null, at,
   });
 }
+
+/**
+ * 重算跨源重复报价的遮蔽标记。
+ *
+ * 为什么需要：两个聚合源（priceai / aihaotan）覆盖面重叠约 1400 条商品，同一条报价会在
+ * 比价页出现两行。更糟的是店主改过名时两边店名对不上（priceai=[词生量] / aihaotan=[王哥源头]），
+ * 而「在售家数」用的是 COUNT(DISTINCT 店名)，于是同一家店会被算成两家。
+ *
+ * 判定：同一个 url_canonical 只保留 verified_at 最新的一条（并列时取 id 小的，保证结果稳定）。
+ *
+ * **只在「一个源在该链接上只有一行」时才参与去重**——有些店铺采不到单品链接，
+ * 整店商品共用入口 URL 兜底（实测「昔尘数卡」13 个完全不同的商品都挂在同一个 url 上）。
+ * 那是 13 个真商品，不是重复；按 URL 盲目去重会把其中 12 条抹掉。
+ *
+ * 结果落成一列而不是查询时现算：现算要三层相关子查询，实测单次超过 3 分钟；
+ * 落列后每轮采集重算一次约 0.4 秒，前台查询零额外代价。
+ */
+export function recomputeShadowedOffers(db: SqliteDatabase): number {
+  const run = db.transaction(() => {
+    db.prepare("UPDATE raw_offers SET shadowed=0 WHERE shadowed<>0").run();
+    const info = db
+      .prepare(
+        `UPDATE raw_offers SET shadowed=1 WHERE id IN (
+           WITH clean AS (
+             SELECT url_canonical, source_id FROM raw_offers
+             WHERE hidden=0 GROUP BY url_canonical, source_id HAVING COUNT(*)=1
+           ),
+           ranked AS (
+             SELECT o.id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY o.url_canonical
+                      ORDER BY COALESCE(o.verified_at,'') DESC, o.id ASC
+                    ) AS rn
+             FROM raw_offers o
+             JOIN clean c ON c.url_canonical=o.url_canonical AND c.source_id=o.source_id
+             WHERE o.hidden=0
+           )
+           SELECT id FROM ranked WHERE rn>1
+         )`,
+      )
+      .run();
+    return info.changes;
+  });
+  return run();
+}
