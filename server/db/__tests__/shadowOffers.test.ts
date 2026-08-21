@@ -14,9 +14,14 @@ afterEach(() => {
 });
 
 const sources = new Set<string>();
+/** 源名以 kind: 前缀声明采集器类型，例如 "aihaotanApi:agg1"，用于测优先级。 */
 function ensureSource(id: string) {
   if (sources.has(id)) return;
-  upsertSource(db, { id, name: id, entryUrl: `https://${id}.test/`, baseUrl: `https://${id}.test` });
+  const [kind, rest] = id.includes(":") ? id.split(":") : [undefined, id];
+  upsertSource(db, {
+    id, name: rest!, entryUrl: `https://${rest}.test/`, baseUrl: `https://${rest}.test`,
+    ...(kind ? { collectorKind: kind } : {}),
+  });
   sources.add(id);
 }
 
@@ -100,5 +105,40 @@ describe("跨源重复报价的遮蔽", () => {
     insert({ id: "a", source: "s1", url: "https://a.cn/item/1", verifiedAt: "2026-08-20T00:00:00Z" });
     insert({ id: "b", source: "s2", url: "https://a.cn/item/2", verifiedAt: "2026-08-21T00:00:00Z" });
     expect(recomputeShadowedOffers(db)).toBe(0);
+  });
+});
+
+describe("源优先级（同一天采到时谁胜出）", () => {
+  const AHT = "aihaotanApi:aht";
+  const PA = "priceaiApi:pa";
+  const DIRECT = "shopApi:shop";
+
+  it("同一天内 aihaotan 压过 priceai，不看谁跑得晚", () => {
+    // priceai 写库更晚（跑得快、先结束的反而可能更晚写），光比时刻会让它赢
+    insert({ id: "aht", source: AHT, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T19:04:00Z" });
+    insert({ id: "pa", source: PA, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T19:09:00Z" });
+    recomputeShadowedOffers(db);
+    expect(shadowed()).toEqual(["pa"]);
+  });
+
+  it("直采压过所有聚合源", () => {
+    insert({ id: "aht", source: AHT, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T19:09:00Z" });
+    insert({ id: "direct", source: DIRECT, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T19:01:00Z" });
+    recomputeShadowedOffers(db);
+    expect(shadowed()).toEqual(["aht"]);
+  });
+
+  it("隔了天就以新的为准——优先级不该让挂掉的源拿旧数据盖住别人今天刚采的", () => {
+    insert({ id: "aht-stale", source: AHT, url: "https://a.cn/item/1", verifiedAt: "2026-08-18T19:00:00Z" });
+    insert({ id: "pa-fresh", source: PA, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T19:00:00Z" });
+    recomputeShadowedOffers(db);
+    expect(shadowed()).toEqual(["aht-stale"]);
+  });
+
+  it("同一天、同优先级时仍按时刻定序", () => {
+    insert({ id: "early", source: PA, url: "https://a.cn/item/1", verifiedAt: "2026-08-21T01:00:00Z" });
+    insert({ id: "late", source: "priceaiApi:pa2", url: "https://a.cn/item/1", verifiedAt: "2026-08-21T02:00:00Z" });
+    recomputeShadowedOffers(db);
+    expect(shadowed()).toEqual(["early"]);
   });
 });

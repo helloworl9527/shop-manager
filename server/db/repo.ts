@@ -515,13 +515,42 @@ export function upsertSource(db: SqliteDatabase, s: {
 }
 
 /**
+ * 跨源去重时谁胜出的优先级（数字越小越优先）。
+ *
+ * 直采排最前：它是实时打源站，有真实缺货状态和完整字段，最权威。聚合源开采前已经
+ * 会跳过本机直采的店铺（见 knownStoreUrls），正常不会撞上，这里是兜底。
+ *
+ * aihaotan 排在 priceai 前：它更新得更勤，给的是真实库存数字而非快照 status。
+ * 实测同一条商品拿代理打链动实时接口仲裁，链动给 ¥42/「8月21晚」，aihaotan 一致，
+ * priceai 是 ¥28.5/「8月20日」。
+ *
+ * 源已被删除（source_id 悬空）的历史行排最后：没人再更新它了。
+ */
+const DEDUPE_PRIORITY: Record<string, number> = { aihaotanApi: 1, priceaiApi: 2 };
+const DEDUPE_PRIORITY_DIRECT = 0;
+const DEDUPE_PRIORITY_ORPHAN = 9;
+
+function dedupePriorityCase(): string {
+  const branches = Object.entries(DEDUPE_PRIORITY)
+    .map(([kind, rank]) => `WHEN ${JSON.stringify(kind).replace(/"/g, "'")} THEN ${rank}`)
+    .join(" ");
+  return `CASE s.collector_kind ${branches} ELSE ${DEDUPE_PRIORITY_DIRECT} END`;
+}
+
+/**
  * 重算跨源重复报价的遮蔽标记。
  *
  * 为什么需要：两个聚合源（priceai / aihaotan）覆盖面重叠约 1400 条商品，同一条报价会在
  * 比价页出现两行。更糟的是店主改过名时两边店名对不上（priceai=[词生量] / aihaotan=[王哥源头]），
  * 而「在售家数」用的是 COUNT(DISTINCT 店名)，于是同一家店会被算成两家。
  *
- * 判定：同一个 url_canonical 只保留 verified_at 最新的一条（并列时取 id 小的，保证结果稳定）。
+ * 判定：同一个 url_canonical 只保留一条，排序依次是
+ *   1. 采集日期（UTC 天）新的优先——隔了天的旧数据一律让位，防止某个源挂掉后
+ *      还拿它几天前的数据盖掉别人今天刚采的；
+ *   2. 同一天内按源优先级（见 DEDUPE_PRIORITY）——两个聚合源在同一轮夜跑里采集，
+ *      光比 verified_at 等于「谁跑得慢谁赢」（aihaotan 翻 120 页要 4 分钟，
+ *      priceai 只要 75 秒），那是副产品不是判断，所以这里用明确的优先级定胜负；
+ *   3. 再按具体时刻、最后按 id——保证重算结果稳定，不会来回翻。
  *
  * **只在「一个源在该链接上只有一行」时才参与去重**——有些店铺采不到单品链接，
  * 整店商品共用入口 URL 兜底（实测「昔尘数卡」13 个完全不同的商品都挂在同一个 url 上）。
@@ -544,10 +573,14 @@ export function recomputeShadowedOffers(db: SqliteDatabase): number {
              SELECT o.id,
                     ROW_NUMBER() OVER (
                       PARTITION BY o.url_canonical
-                      ORDER BY COALESCE(o.verified_at,'') DESC, o.id ASC
+                      ORDER BY substr(COALESCE(o.verified_at,''),1,10) DESC,
+                               COALESCE(prio.rank, ${DEDUPE_PRIORITY_ORPHAN}) ASC,
+                               COALESCE(o.verified_at,'') DESC,
+                               o.id ASC
                     ) AS rn
              FROM raw_offers o
              JOIN clean c ON c.url_canonical=o.url_canonical AND c.source_id=o.source_id
+             LEFT JOIN (SELECT s.id, ${dedupePriorityCase()} AS rank FROM sources s) prio ON prio.id=o.source_id
              WHERE o.hidden=0
            )
            SELECT id FROM ranked WHERE rn>1
