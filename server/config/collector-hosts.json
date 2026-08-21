@@ -101,12 +101,16 @@
       "woaimaihao.com",
       "xingbao-ai.shop",
       "xxxyan.cc"
+    ],
+    "aihaotanApi": [
+      "aihaotan.com",
+      "www.aihaotan.com"
+    ],
+    "priceaiApi": [
+      "priceai.cc"
     ]
   },
   "overrides": {
     "gemini91.shop": "dujiao"
-  },
-  "priceaiApi": [
-    "priceai.cc"
-  ]
+  }
 }

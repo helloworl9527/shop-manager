@@ -9,6 +9,7 @@ import { collectShopApi } from "./shopApi";
 import { collectPublicProductsApi } from "./publicProductsApi";
 import { collectProductsListApi } from "./productsListApi";
 import { collectPriceaiApi } from "./priceaiApi";
+import { collectAihaotanApi } from "./aihaotanApi";
 import { normalizeHostname, shopTokenFromUrl } from "./util";
 import collectorHostsConfig from "../config/collector-hosts.json";
 
@@ -55,7 +56,7 @@ for (const [host, kind] of Object.entries((collectorHostsConfig as CollectorHost
   HOST_TO_KIND.set(normalized, kind);
 }
 
-const IMPLEMENTED_KINDS = new Set<CollectorKind>(["kami", "dujiao", "dujiaoHtml", "shopApi", "publicProductsApi", "productsListApi", "priceaiApi", "genericHtml", "browser"]);
+const IMPLEMENTED_KINDS = new Set<CollectorKind>(["kami", "dujiao", "dujiaoHtml", "shopApi", "publicProductsApi", "productsListApi", "priceaiApi", "aihaotanApi", "genericHtml", "browser"]);
 const PROBE_STEP_TIMEOUT_MS = 10_000;
 const PROBE_CONCURRENCY = 3;
 let activeProbes = 0;
@@ -193,6 +194,7 @@ async function collectKindTrial(target: CollectorTarget, kind: CollectorKind, ht
   if (kind === "publicProductsApi") return collectPublicProductsApi(target, http);
   if (kind === "productsListApi") return collectProductsListApi(target, http);
   if (kind === "priceaiApi") return collectPriceaiApi(target, http);
+  if (kind === "aihaotanApi") return collectAihaotanApi(target, http);
   if (kind === "dujiaoHtml") {
     const html = await http.fetchText(target.sourceUrl);
     return collectDujiaoHtmlFromHtml(target, html, http);

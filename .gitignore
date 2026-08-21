@@ -4,6 +4,7 @@ dist/
 *.db-shm
 *.db-wal
 .env
+.env.bak-*
 .node-path
 .DS_Store
 

@@ -15,6 +15,7 @@ export type CollectorKind =
   | "publicProductsApi"
   | "productsListApi"
   | "priceaiApi"
+  | "aihaotanApi"
   | "shopUserProductsApi"
   | "unicornHtml"
   | "mooncakeCatalog"

@@ -178,7 +178,7 @@ async function collectSourceInner(db: SqliteDatabase, source: SourceRow, deps: C
     // 聚合型数据源（priceai 等）会收录几百家店铺，其中一部分我们自己也在直采。
     // 直采的更全更新，重复收录会让同一家店在比价页出现两次、「几家在售」也翻倍。
     // 这里把本机直采的入口一并传下去，由采集器自行跳过。
-    if (source.collector_kind === "priceaiApi") {
+    if (source.collector_kind === "priceaiApi" || source.collector_kind === "aihaotanApi") {
       target = { ...target, knownStoreUrls: listCollectedStoreUrls(db, source.id) };
     }
     const hostOrUrl = source.entry_url || source.base_url || "";

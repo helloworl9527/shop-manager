@@ -7,6 +7,7 @@ import { collectShopApi } from "./shopApi";
 import { collectPublicProductsApi } from "./publicProductsApi";
 import { collectProductsListApi } from "./productsListApi";
 import { collectPriceaiApi } from "./priceaiApi";
+import { collectAihaotanApi } from "./aihaotanApi";
 import { collectGenericHtml } from "./genericHtml";
 import { collectBrowser } from "./browser";
 import { detectCollector, inferCollectorKind } from "./registry";
@@ -20,6 +21,7 @@ const COLLECTORS: Partial<Record<CollectorKind, Collector>> = {
   publicProductsApi: collectPublicProductsApi,
   productsListApi: collectProductsListApi,
   priceaiApi: collectPriceaiApi,
+  aihaotanApi: collectAihaotanApi,
   genericHtml: collectGenericHtml,
   browser: collectBrowser,
 };
